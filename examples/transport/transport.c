@@ -45,6 +45,19 @@ bool transport_open_client(const char *schema, const char *host, uint16_t port, 
 
     (void)memset(pbuf, 0, sizeof(pbuf));
 
+    if(
+        (strcmp("https", schema) == 0)
+        ||
+        (strcmp("wss", schema) == 0)
+    ){
+        ERROR("not supporting https or wss schemas at the moment")
+        return false;
+    }
+
+#if 1
+    //(void)snprintf(pbuf, sizeof(pbuf), "%u", port);
+    service = "80";        
+#else
     if(port != 0){
     
         (void)snprintf(pbuf, sizeof(pbuf), "%u", port);
@@ -54,6 +67,7 @@ bool transport_open_client(const char *schema, const char *host, uint16_t port, 
 
         service = schema;
     }
+#endif    
 
     tmp = getaddrinfo(host, service, NULL, &res);
 

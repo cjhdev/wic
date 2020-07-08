@@ -25,8 +25,8 @@
 #include <stdio.h>
 #include <assert.h>
 
-#define WSC_DEBUG(...) do{printf("%s: %u: %s: debug: ", __FILE__, __LINE__, __FUNCTION__);printf(__VA_ARGS__);printf("\n");}while(0);
-#define WSC_ERROR(...) do{printf("%s: %u: %s: error: ", __FILE__, __LINE__, __FUNCTION__);printf(__VA_ARGS__);printf("\n");}while(0);
-#define WSC_ASSERT(XX) assert(XX);
+#define WIC_DEBUG(...) do{printf("%s: %u: %s: debug: ", __FILE__, __LINE__, __FUNCTION__);printf(__VA_ARGS__);printf("\n");}while(0);
+#define WIC_ERROR(...) do{printf("%s: %u: %s: error: ", __FILE__, __LINE__, __FUNCTION__);printf(__VA_ARGS__);printf("\n");}while(0);
+#define WIC_ASSERT(XX) assert(XX);
 
 #endif

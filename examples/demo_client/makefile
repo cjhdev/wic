@@ -13,7 +13,7 @@ CFLAGS += -DVERSION=\"$(shell cat $(DIR_ROOT)/version)\"
 
 CFLAGS := -O0 -Wall -ggdb $(INCLUDES)
 
-CFLAGS += -D'WSC_PORT_INCLUDE="port.h"'
+CFLAGS += -D'WIC_PORT_INCLUDE="port.h"'
 
 SRC := $(notdir $(wildcard $(DIR_ROOT)/src/*.c)) transport.c
 OBJ := $(SRC:.c=.o)

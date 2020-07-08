@@ -47,15 +47,6 @@ static void do_client(int *s, struct wic_inst *inst, const struct wic_init_arg *
     }
 
     if(
-        (strcmp("https", wic_get_url_schema(inst)) == 0)
-        ||
-        (strcmp("wss", wic_get_url_schema(inst)) == 0)
-    ){
-        ERROR("not supporting https or wss schemas at the moment")
-        exit(EXIT_FAILURE);
-    }
-
-    if(
         transport_open_client(
             wic_get_url_schema(inst),
             wic_get_url_hostname(inst),
@@ -85,8 +76,6 @@ int main(int argc, char **argv)
     static int s = -1;
 
     struct wic_init_arg arg = {0};
-
-    
 
     arg.rx = rx_buffer;
     arg.rx_max = sizeof(rx_buffer);

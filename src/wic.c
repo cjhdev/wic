@@ -259,23 +259,7 @@ const char *wic_get_url_schema(const struct wic_inst *self)
 
 const char *wic_get_redirect_url(const struct wic_inst *self)
 {
-    const char *retval = NULL;
-
-    if((self->role == WIC_ROLE_CLIENT) && (self->state == WIC_STATE_CLOSED)){
-
-        switch(self->status_code){
-        case 301:            
-        case 302:
-        case 303:
-            retval = wic_get_header(self, "location");
-            break;            
-        
-        default:
-            break;
-        }
-    }
-
-    return retval;
+    return self->redirect_url;        
 }
 
 bool wic_start(struct wic_inst *self)
@@ -1058,7 +1042,7 @@ static bool start_server(struct wic_inst *self)
         stream_write(&self->tx, b64_hash, sizeof(b64_hash));
         stream_put_str(&self->tx, "\r\n");
 
-        for(struct wic_header *ptr = self->tx_header; ptr != NULL; ptr++){
+        for(struct wic_header *ptr = self->tx_header; ptr != NULL; ptr = ptr->next){
 
             stream_put_str(&self->tx, ptr->name);
             stream_put_str(&self->tx, ": ");
@@ -1094,7 +1078,7 @@ static bool start_client(struct wic_inst *self)
     uint32_t nonce[4U];
     char nonce_b64[24U];
 
-    WIC_ASSERT(sizeof(nonce_b64) == (b64_encoded_size(sizeof(nonce)) + 1U))
+    WIC_ASSERT(sizeof(nonce_b64) == b64_encoded_size(sizeof(nonce)))
 
     if(self->state == WIC_STATE_INIT){
 
@@ -1149,7 +1133,7 @@ static bool start_client(struct wic_inst *self)
             stream_write(&self->tx, nonce_b64, sizeof(nonce_b64));            
             stream_put_str(&self->tx, "\r\n");
 
-            for(struct wic_header *ptr = self->tx_header; ptr != NULL; ptr++){
+            for(struct wic_header *ptr = self->tx_header; ptr != NULL; ptr = ptr->next){
 
                 stream_put_str(&self->tx, ptr->name);
                 stream_put_str(&self->tx, ": ");
@@ -1683,7 +1667,14 @@ static int on_response_complete(http_parser *http)
                 WIC_DEBUG("location field is missing (cannot redirect)")
                 return -1;
             }
+            else{
 
+                WIC_DEBUG("redirect to %s", header)
+                self->redirect_url = header;
+            }
+
+            wic_close_with_reason(self, WIC_CLOSE_TRANSPORT_ERROR, NULL, 0U);
+            return -1;
             break;
 
         default:

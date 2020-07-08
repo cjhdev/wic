@@ -37,7 +37,7 @@ int main(int argc, char **argv)
     bool open;
     int s, redirects = 3;
     static uint8_t tx[1000], rx[1000];
-    static char url[1000] = "ws://demos.kaazing.com/echo";
+    static char url[1000] = "ws://demos.kaazing.com:80/echo";
     struct wic_inst inst;
     struct wic_init_arg arg = {0};
     

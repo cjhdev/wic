@@ -396,6 +396,8 @@ struct wic_inst {
 
     /* The default size should cover all use cases */
     char hostname[WIC_HOSTNAME_MAXLEN];
+
+    const char *redirect_url;
 };
 
 /** Initialise an instance
