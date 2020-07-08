@@ -54,20 +54,15 @@ bool transport_open_client(const char *schema, const char *host, uint16_t port, 
         return false;
     }
 
-#if 1
-    //(void)snprintf(pbuf, sizeof(pbuf), "%u", port);
-    service = "80";        
-#else
     if(port != 0){
     
         (void)snprintf(pbuf, sizeof(pbuf), "%u", port);
         service = pbuf;        
     }
-    else if(schema != NULL){
+    else{
 
-        service = schema;
+        service = "80";
     }
-#endif    
 
     tmp = getaddrinfo(host, service, NULL, &res);
 
