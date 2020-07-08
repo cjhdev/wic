@@ -37,9 +37,14 @@ int main(int argc, char **argv)
     bool open;
     int s, redirects = 3;
     static uint8_t tx[1000], rx[1000];
-    static char url[1000] = "ws://demos.kaazing.com:80/echo";
+    static char url[1000] = "ws://echo.websocket.org/";
     struct wic_inst inst;
     struct wic_init_arg arg = {0};
+
+    if(argc > 1){
+
+        strcpy(url, argv[1]);
+    }
     
     arg.tx = tx; arg.tx_max = sizeof(tx);    
     arg.rx = rx; arg.rx_max = sizeof(rx);    

@@ -1178,6 +1178,8 @@ static void close_with_reason(struct wic_inst *self, uint16_t code, const char *
             .size = size
         };
 
+        self->state = WIC_STATE_CLOSED;
+
         if(!utf8_is_complete(utf8_parse_string(0U, reason, size))){
 
             WIC_ERROR("reason string must be UTF8 (discarding)")
@@ -1194,8 +1196,6 @@ static void close_with_reason(struct wic_inst *self, uint16_t code, const char *
             WIC_ERROR("tx buffer too short")
         }
 
-        self->state = WIC_STATE_CLOSED;
-    
         if(self->on_close != NULL){
 
             self->on_close(self, code, reason, size);
