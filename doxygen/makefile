@@ -21,4 +21,15 @@ all: clean
 clean: 
 	rm -rf html/*
 
+deploy: all
+	rm -rf deploy
+	mkdir deploy
+	git clone git@github.com:cjhdev/wic_api.git deploy
+	rm -rf deploy/docs
+	mkdir deploy/docs
+	cp -r html/* deploy/docs/
+	git -C deploy add -A
+	git -C deploy commit -m "update"
+	git -C deploy push origin master
+
 .PHONY: all clean deploy

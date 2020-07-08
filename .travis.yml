@@ -1,9 +1,0 @@
-notifications:
-  email: false
-language: C
-sudo: required
-branches:
-  only:
-    - master
-script:
-  - $TRAVIS_BUILD_DIR/.travis-deploy.sh
