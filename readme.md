@@ -41,7 +41,8 @@ to copy the fields when they are available.
 - add `include` to the search path
 - compile sources in `src`
 
-There are some macros you can define. These are commented in [include/wic.h](include/wic.h).
+There are some macros you can define. These listed at the top of [include/wic.h](include/wic.h) and
+in the [API documentation](https://cjhdev.github.io/wic_api/).
 
 The WIC_PORT_HEADER macro can be used to define a filename which the
 will include into wic.h. This might be the most
