@@ -1,10 +1,10 @@
-Websockets in C
+WebSockets in C
 ===============
 
 WIC is a C99 implementation of [rfc6455](https://tools.ietf.org/html/rfc6455)
 websockets designed for embedded applications.
 
-WIC decouples the protocol details from the transport layer. This makes
+WIC decouples the websocket protocol from the transport layer. This makes
 it possible to use WIC over any transport layer assuming you are prepared
 to do the integration work. 
 
@@ -158,9 +158,6 @@ WIC integrates code from the following projects:
 - Joyent/Node-JS http-parser
 - Bjoern Hoehrmann's UTF8 parser
 - MBED TLS SHA1
-
-All projects have permissive licenses. License notices for all can
-be found in the source.
 
 The Autobahn Test Suite has been used for verification.
 
