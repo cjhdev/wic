@@ -102,7 +102,7 @@ int main(int argc, char **argv)
 
 static void on_text_handler(struct wic_inst *inst, bool fin, const char *data, uint16_t size)
 {
-    printf("received text: %*.s\n", size, data);
+    printf("received text: %.*s\n", size, data);
 }
 
 static void on_open_handler(struct wic_inst *inst)
