@@ -8,7 +8,7 @@ WIC decouples the websocket protocol from the transport layer. This makes
 it possible to use WIC over any transport layer assuming you are prepared
 to do the integration work. 
 
-WIC is meant to support server and client roles, but at the moment
+WIC is meant to support server and client roles but at the moment
 only supports client roles. Call it a work in progress.
 
 ## Features
