@@ -2,7 +2,4 @@ examples/autobahn/*
 examples/demo_client/*
 examples/transport/*
 
-# comment to build mbed examples (is there a beter way?)
-examples/mbed_client/*
-
 
