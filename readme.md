@@ -21,6 +21,7 @@ only supports client roles. Call it a work in progress.
 - works with any transport layer you like
 - automatic payload fragmentation on receive
 - trivial to integrate with an existing build system
+- [mbed wrapper](examples/mbed)
 
 ## Limitations
 

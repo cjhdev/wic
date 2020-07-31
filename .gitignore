@@ -1,0 +1,6 @@
+BUILD
+mbed-os
+.mbed
+mbed-os.lib
+*.py
+*.pyc
