@@ -64,7 +64,7 @@ No support for this mode at this time.
 ## Installation
 
 Clone the WIC repository into a directory in your MBED project.
-The `.mbed-ignore` file is written in such a way that the right sources
+The `.mbedignore` file is written in such a way that the right sources
 will be found by the build system.
 
 ## License
