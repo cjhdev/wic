@@ -1,5 +1,5 @@
 #include "mbed.h"
-#include "wic_client.hh"
+#include "wic_client.hpp"
 
 #include <assert.h>
 
