@@ -9,7 +9,11 @@ const uint32_t WICClient::socket_open_flag = 1U;
 
 WICClient::WICClient(NetworkInterface &interface) :
     interface(interface),
-    condition(mutex)        
+    condition(mutex),
+    on_text_cb(nullptr),
+    on_binary_cb(nullptr),
+    on_open_cb(nullptr),
+    on_close_cb(nullptr)
 {
     init_arg = {0};
 
@@ -30,10 +34,11 @@ WICClient::WICClient(NetworkInterface &interface) :
     
     init_arg.role = WIC_ROLE_CLIENT;
 
-
     /* these will block on flags until needed */
     writer_thread.start(callback(this, &WICClient::writer_task));
     reader_thread.start(callback(this, &WICClient::reader_task));
+
+    event_thread.start(callback(&events, &EventQueue::dispatch_forever));
 }
 
 /* static methods *****************************************************/
@@ -68,28 +73,48 @@ WICClient::handle_rand(struct wic_inst *self)
 void
 WICClient::handle_open(struct wic_inst *self)
 {
-    printf("handling open\n");            
+    WICClient *obj = to_obj(self);
+
+    obj->events.cancel(obj->timeout_id);
+    
+    if(obj->on_open_cb){
+
+        obj->on_open_cb();
+    }
 }
 
 void
 WICClient::handle_close(struct wic_inst *self, uint16_t code, const char *reason, uint16_t size)
 {
-    printf("handling close event\n");   
-
     WICClient *obj = to_obj(self);
-    obj->sock.close();            
+    obj->sock.close();
+
+    if(obj->on_close_cb){
+
+        obj->on_close_cb(code, reason, size);
+    }
 }
         
 void
 WICClient::handle_text(struct wic_inst *self, bool fin, const char *data, uint16_t size)
 {
-    printf("handling binary event\n");      
+    WICClient *obj = to_obj(self);
+    
+    if(obj->on_text_cb){
+
+        obj->on_text_cb(fin, data, size);
+    }    
 }
         
 void
 WICClient::handle_binary(struct wic_inst *self, bool fin, const void *data, uint16_t size)
 {
-    printf("handling binary event\n");            
+    WICClient *obj = to_obj(self);
+    
+    if(obj->on_binary_cb){
+
+        obj->on_binary_cb(fin, data, size);
+    }   
 }
 
 /* protected instance methods *****************************************/
@@ -118,57 +143,62 @@ WICClient::do_close(bool &done)
 }
 
 void
+WICClient::do_close_with_reason(bool &done, uint16_t code, const char *reason, uint16_t size)
+{
+    wic_close_with_reason(&inst, code, reason, size);
+    done = true;
+    condition.notify_all();
+}
+
+void
+WICClient::do_timeout(bool &done)
+{
+    do_close(done);
+}
+
+void
 WICClient::do_open(bool &done, bool &retval)
 {
     SocketAddress a;
+    nsapi_error_t err;
 
-    sock.open(&interface);
+    if(!wic_init(&inst, &init_arg)){
 
-    interface.gethostbyname(wic_get_url_hostname(&inst), &a);
+        done = true;
+        return;
+    }
 
-    a.set_port(wic_get_url_port(&inst));
-
-    nsapi_error_t err = sock.connect(a);
+    err = interface.gethostbyname(wic_get_url_hostname(&inst), &a);
 
     if(err != NSAPI_ERROR_OK){
 
-        switch(err){
-        case NSAPI_ERROR_DNS_FAILURE:
-        case NSAPI_ERROR_TIMEOUT:
-        case NSAPI_ERROR_CONNECTION_TIMEOUT:
-            //ThisThread::sleep_for(5000);
-            break;
-        default:
-            //ThisThread::sleep_for(5000);
-            break;
-        }
-
-        //requeue?
-        //or stay in this event and loop
+        done = true;
+        return;
     }
 
-    /* this should never fail at this point */
-    {
-        bool ok = wic_init(&inst, &init_arg);
-        assert(ok);
+    sock.open(&interface);
+
+    a.set_port(wic_get_url_port(&inst));
+
+    err = sock.connect(a);
+
+    if(err != NSAPI_ERROR_OK){
+
+        sock.close();
+        done = true;
+        return;
     }
-    
-    /* this might fail if something weird happens like not
-     * enough memory for all the headers
-     *
-     * */
-    {
-        bool ok = wic_start(&inst);
-        assert(ok);
+
+    if(!wic_start(&inst)){
+
+        sock.close();
+        done = true;
+        return;
     }
 
     flags.set(socket_open_flag);
 
-    /* now we actually have to wait for the thign to open */
-    
-        
-    done = true;
-    retval = true;
+    timeout_id = events.call_in(5000, callback(this, &WICClient::do_timeout), done);
 }
 
 void
@@ -193,9 +223,9 @@ WICClient::do_send_binary(bool &done, bool &retval, bool fin, const void *value,
 }
 
 void
-WICClient::do_signal_socket_error()
+WICClient::do_signal_socket_error(uint16_t code)
 {
-    
+    wic_close_with_reason(&inst, code, NULL, 0U);
 }
 
 void
@@ -215,7 +245,7 @@ WICClient::writer_task(void)
             
             if(sock.send(buf->data, buf->size) != NSAPI_ERROR_OK){
 
-                //signal failure to event loop, finalize thread
+                events.call(callback(this, &WICClient::do_signal_socket_error), WIC_CLOSE_PROTOCOL_ERROR);
             }                
         
             output.free(buf);
@@ -243,7 +273,7 @@ WICClient::reader_task(void)
 
             if(retval < 0){
 
-                // signal failure to event loop
+                events.call(callback(this, &WICClient::do_signal_socket_error), WIC_CLOSE_PROTOCOL_ERROR);
 
                 input.free(buf);    
                 break;
@@ -252,7 +282,7 @@ WICClient::reader_task(void)
             buf->size = retval;
 
             input.put(buf);
-            queue.event(this, &WICClient::do_parse);                
+            events.call(this, &WICClient::do_parse);                
         }
 
         flags.clear(socket_open_flag);
@@ -269,7 +299,7 @@ WICClient::open(const char *url)
     
     mutex.lock();
 
-    do_open(done, retval);
+    events.call(callback(this, &WICClient::do_open), done, retval);
 
     while(!done){
     
@@ -288,7 +318,7 @@ WICClient::close()
 
     bool done = false;
 
-    do_close(done);
+    events.call(callback(this, &WICClient::do_close), done);
 
     while(!done){
     
@@ -332,7 +362,7 @@ WICClient::text(bool fin, const char *value, uint16_t size)
 
     mutex.lock();
 
-    do_send_text(done, retval, fin, value, size);
+    events.call(callback(this, &WICClient::do_send_text), done, retval, fin, value, size);
 
     while(!done){
     
@@ -358,8 +388,8 @@ WICClient::binary(bool fin, const void *value, uint16_t size)
 
     mutex.lock();
 
-    do_send_binary(done, retval, fin, value, size);
-    
+    events.call(callback(this, &WICClient::do_send_binary), done, retval, fin, value, size);
+
     while(!done){
     
         condition.wait();
@@ -374,4 +404,28 @@ bool
 WICClient::is_open()
 {
     return(wic_get_state(&inst) == WIC_STATE_OPEN);
+}
+
+void
+WICClient::on_text(Callback<void(bool,const char *, uint16_t)> handler)
+{
+    on_text_cb = handler;
+}
+
+void
+WICClient::on_binary(Callback<void(bool,const void *, uint16_t)> handler)
+{
+    on_binary_cb = handler;
+}
+
+void
+WICClient::on_open(Callback<void()> handler)
+{
+    on_open_cb = handler;
+}
+
+void
+WICClient::on_close(Callback<void(uint16_t, const char *, uint16_t)> handler)
+{
+    on_close_cb = handler;
 }

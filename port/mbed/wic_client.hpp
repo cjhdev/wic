@@ -7,6 +7,8 @@ class WICClient {
 
         static const uint32_t socket_open_flag;
 
+        int timeout_id;
+
         uint8_t tx[1012U];
         uint8_t rx[1000U];
 
@@ -14,7 +16,7 @@ class WICClient {
         TCPSocket sock;
         Mutex mutex;
         ConditionVariable condition;
-        EventQueue queue;
+        EventQueue events;
         EventFlags flags;
 
         /* two very similar structures so we can have
@@ -35,9 +37,15 @@ class WICClient {
 
         Thread writer_thread;        
         Thread reader_thread;
+        Thread event_thread;
 
         struct wic_inst inst;
         struct wic_init_arg init_arg;
+
+        Callback<void(bool,const char *, uint16_t)> on_text_cb;
+        Callback<void(bool,const void *, uint16_t)> on_binary_cb;
+        Callback<void()> on_open_cb;
+        Callback<void(uint16_t, const char *, uint16_t)> on_close_cb;
 
         /* get WICClient instance back from wic_inst */
         static WICClient *to_obj(struct wic_inst *self);
@@ -54,10 +62,12 @@ class WICClient {
         void do_parse();
         void do_open(bool &done, bool &retval);
         void do_close(bool &done);
+        void do_close_with_reason(bool &done, uint16_t code, const char *reason, uint16_t size);
         void do_tick();
         void do_send_text(bool &done, bool &retval, bool fin, const char *value, uint16_t size);        
         void do_send_binary(bool &done, bool &retval, bool fin, const void *value, uint16_t size);        
-        void do_signal_socket_error();
+        void do_signal_socket_error(uint16_t code);
+        void do_timeout(bool &done);
 
         /* these run as threads */
         void writer_task(void);
@@ -84,5 +94,11 @@ class WICClient {
         bool binary(bool fin, const void *value, uint16_t size);
 
         /* return true if websocket is open */
-        bool is_open();        
+        bool is_open();
+
+        /* set callback to receive text messages */
+        void on_text(Callback<void(bool,const char *, uint16_t)> handler);
+        void on_binary(Callback<void(bool,const void *, uint16_t)> handler);
+        void on_close(Callback<void(uint16_t,const char *, uint16_t)> handler);
+        void on_open(Callback<void()> handler);
 };
