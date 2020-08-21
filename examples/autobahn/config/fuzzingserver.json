@@ -4,12 +4,6 @@
     "outdir": "./reports/clients",
     "cases": ["*"],
     "exclude-cases": [
-        "9.3.*",
-        "9.4.*",
-        "9.5.*",
-        "9.6.*",
-        "9.7.*",
-        "9.8.*"
-        ],
+    ],
     "exclude-agent-cases": {}
 }

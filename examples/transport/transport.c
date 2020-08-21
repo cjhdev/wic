@@ -21,7 +21,6 @@
 
 #include "transport.h"
 #include "log.h"
-#include "wic.h"
 
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -33,7 +32,7 @@
 #include <errno.h>
 #include <string.h>
 
-bool transport_open_client(const char *schema, const char *host, uint16_t port, int *s)
+bool transport_open_client(enum wic_schema schema, const char *host, uint16_t port, int *s)
 {
     char pbuf[20];
     struct addrinfo *res;
@@ -41,17 +40,17 @@ bool transport_open_client(const char *schema, const char *host, uint16_t port, 
     const char *service = NULL;
     int tmp;
 
-    printf("%s\n", host);
-
     (void)memset(pbuf, 0, sizeof(pbuf));
 
-    if(
-        (strcmp("https", schema) == 0)
-        ||
-        (strcmp("wss", schema) == 0)
-    ){
+    switch(schema){
+    case WIC_SCHEMA_HTTPS:
+    case WIC_SCHEMA_WSS:
+
         ERROR("not supporting https or wss schemas at the moment")
         return false;
+
+    default:
+        break;
     }
 
     if(port != 0){
@@ -94,7 +93,6 @@ bool transport_open_client(const char *schema, const char *host, uint16_t port, 
             }
             else{
 
-                LOG("connected!");
                 retval = true;
             }
         }
@@ -105,31 +103,42 @@ bool transport_open_client(const char *schema, const char *host, uint16_t port, 
     return retval;
 }
 
-bool transport_write(int s, const void *data, size_t size)
+void transport_write(int s, const void *data, size_t size)
 {
-    return (write(s, data, size) == size);
+    const uint8_t *ptr = data;
+    size_t pos;
+    int retval;
+
+    for(pos=0U; pos < size; pos += retval){
+
+        retval = write(s, &ptr[pos], size - pos);
+
+        if(retval <= 0){
+
+            break;
+        }
+    }
 }
 
 bool transport_recv(int s, struct wic_inst *inst)
 {
     static uint8_t buffer[1000U];
     ssize_t bytes;
-    
+    size_t retval, pos;
+
     bytes = recv(s, buffer, sizeof(buffer), 0);
 
     if(bytes > 0){
+
+        for(pos=0U; pos < bytes; pos += retval){
         
-        wic_parse(inst, buffer, bytes);
+            retval = wic_parse(inst, &buffer[pos], bytes - pos);
+        }
     }
+    
+    if(bytes <= 0){
 
-    if(bytes < 0){
-
-        ERROR("socket error")
-    }
-
-    if(bytes == 0){
-
-        ERROR("socket closed")
+        wic_close_with_reason(inst, WIC_CLOSE_ABNORMAL_2, NULL, 0);
     }
 
     return (bytes > 0);

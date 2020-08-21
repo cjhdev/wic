@@ -19,14 +19,31 @@
  *
  * */
 
-#ifndef LOG_H
-#define LOG_H
+#include "wic_client.hpp"
+#include "EthernetInterface.h"
 
-#include <stdio.h>
+int main()
+{
+    enum wic_encoding encoding;
+    bool fin;
+    static char buffer[1000];
+    nsapi_size_or_error_t bytes;
 
-extern bool log_enabled;
+    static EthernetInterface eth;
+    static WIC::Client<1000, 1012> client(eth);
 
-#define LOG(...) do{if(log_enabled){printf(__VA_ARGS__);printf("\n");fflush(stdout);}}while(0);
-#define ERROR(...) do{fprintf(stderr, "%s: ", __FILE__);fprintf(stderr, "error: ");fprintf(stderr, __VA_ARGS__);fprintf(stderr, "\n");fflush(stderr);}while(0);
+    eth.connect();
 
-#endif
+    client.connect("ws://echo.websocket.org/");
+
+    client.send("hello world!");
+
+    bytes = client.recv(encoding, fin, buffer, 100);
+
+    if((bytes >= 0) && (encoding == WIC_ENCODING_UTF8)){
+
+        printf("got: %.*s\n", bytes, buffer);
+    }
+            
+    client.close();                
+}

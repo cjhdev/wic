@@ -26,11 +26,11 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-struct wic_inst;
+#include "wic.h"
 
-bool transport_open_client(const char *schema, const char *host, uint16_t port, int *s);
+bool transport_open_client(enum wic_schema schema, const char *host, uint16_t port, int *s);
 bool transport_recv(int s, struct wic_inst *inst);
-bool transport_write(int s, const void *data, size_t size);
+void transport_write(int s, const void *data, size_t size);
 void transport_close(int *s);
 
 #endif

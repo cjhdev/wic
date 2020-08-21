@@ -1,31 +1,18 @@
 MBED WIC Wrapper
 ================
 
-This example makes it a breeze to use WIC on MBED.
+This isn't working properly yet.
 
-## WICClient
+## WIC::Client
 
-This is a wrapper class for client mode.
+A wrapper for client mode.
 
-- supports TCP and TLS modes (determined by target URL)
-- supports redirects (with configurable maximum number of redirects)
-- blocking interfaces which must be called from a non-interrupt
-  context
-- handles full-duplex socket 'backpressure'
+- TX, RX, and URL buffer sizes defined by template
+- blocking interfaces that behave like the regular socket classes
+- TCP or TLS mode determined by URL
+- no need to create/destroy for each connection
 
-WICClient makes use of a number of synchronisation features in
-order to work reliably in a multithreaded MBED application. These
-include:
-
-- dedicated threads for reading and writing
-- mailboxes for incoming and outgoing messages/fragments
-- event loop for serialising access to wic_inst and managing timing
-- mutex and condition variable on application facing interfaces to
-  implement blocking
-
-The application below will try to connect every 10 seconds. Once connected, it will
-send "hello world!" every 5 seconds. If the connection fails, it will return
-to trying to open the connection.
+An example:
 
 ~~~ c++
 #include "wic_client.hpp"
@@ -33,31 +20,32 @@ to trying to open the connection.
 
 int main()
 {
+    enum wic_encoding encoding;
+    bool fin;
+    static char buffer[1000];
+    nsapi_size_or_error_t bytes;
+
     static EthernetInterface eth;
+    static WIC::Client<1000, 1012> client(eth);
 
     eth.connect();
 
-    static WICClient client(eth);
+    client.connect("ws://echo.websocket.org/");
 
-    for(;;){
+    client.send("hello world!");
 
-        if(client.open("ws://echo.websocket.org/")){
+    bytes = client.recv(encoding, fin, buffer, 100);
 
-            while(client.is_open()){
+    if((bytes >= 0) && (encoding == WIC_ENCODING_UTF8)){
 
-                client.text("hello world!");
-                wait_us(5000);
-            }        
-        }
-        else{
-
-            wait_us(10000);
-        }
+        printf("got: %.*s\n", bytes, buffer);
     }
+            
+    client.close();                
 }
 ~~~
 
-## WICServer
+## WIC::Server
 
 No support for this mode at this time.
 

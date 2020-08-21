@@ -4,3 +4,7 @@ mbed-os
 mbed-os.lib
 *.py
 *.pyc
+.gdbinit
+*.jlink
+*.py
+*.pyc

@@ -104,57 +104,107 @@ extern "C" {
 #   define WIC_HOSTNAME_MAXLEN 256U
 #endif
 
+/* the following reasons will be sent over the wire */
 
 /** the purpose for which the connection was established has been fulfilled */
 #define WIC_CLOSE_NORMAL                1000U
+
 /** endpoint is going away */
 #define WIC_CLOSE_GOING_AWAY            1001U
+
 /** protocol error */
 #define WIC_CLOSE_PROTOCOL_ERROR        1002U
+
 /** endpoint has received an opcode it doesn't support */
 #define WIC_CLOSE_UNSUPPORTED           1003U
-#define WIC_CLOSE_RESERVED              1004U
-/** no status (not sent over wire) */
-#define WIC_CLOSE_NO_STATUS             1005U
-/** abnormal closure (not sent over wire) */
-#define WIC_CLOSE_ABNORMAL              1006U
+
 /** data received in message not consistent with type of message (e.g. invalid UTF8) */
 #define WIC_CLOSE_INVALID_DATA          1007U
+
 /** message received violates endpoint policy */
 #define WIC_CLOSE_POLICY                1008U
+
 /** message is too large to receive */
 #define WIC_CLOSE_TOO_BIG               1009U
+
 /** extension is required */
 #define WIC_CLOSE_EXTENSION_REQUIRED    1010U
+
 /** some other unexpected exception */
 #define WIC_CLOSE_UNEXPECTED_EXCEPTION  1011U
-/** websocket closed because of a transport layer error (not sent over wire) */
-#define WIC_CLOSE_TRANSPORT_ERROR       1012U
+
+/* the following are not sent over the wire */
+
+#define WIC_CLOSE_RESERVED          1004U
+
+/** abnormal closure #1 (application specific meaning) */
+#define WIC_CLOSE_ABNORMAL_1        1005U
+
+/** abnormal closure #2  (application specific meaning) */
+#define WIC_CLOSE_ABNORMAL_2        1006U
+
+/** TLS specific abornmal closure  */
+#define WIC_CLOSE_TLS               1015U
 
 struct wic_inst;
 
-/** Called by instance when a text message is receieved
- *
- * @param[in] inst
- * @param[in] fin   true if the final fragment
- * @param[in] data  UTF8
- * @param[in] size  size of data
+/** this enum is used to communicate the purpose of the buffer
  *
  * */
-typedef void (*wic_on_text_fn)(struct wic_inst *inst, bool fin, const char *data, uint16_t size);
+enum wic_buffer {
 
-/** Called by instance when a binary message is received
- *
- * @param[in] inst
- * @param[in] fin   true if the final fragment
- * @param[in] data 
- * @param[in] size  size of data
+    WIC_BUFFER_HTTP,            /**< handshake */
+    WIC_BUFFER_USER,            /**< text or binary */
+    WIC_BUFFER_PING,            /**< ping */
+    WIC_BUFFER_PONG,            /**< pong (in response to ping) */
+    WIC_BUFFER_CLOSE,           /**< close */
+    WIC_BUFFER_CLOSE_RESPONSE   /**< close (in response to close) */
+};
+
+enum wic_encoding {
+
+    WIC_ENCODING_UTF8,
+    WIC_ENCODING_BINARY
+};
+
+/** reason for handshake failure
  *
  * */
-typedef void (*wic_on_binary_fn)(struct wic_inst *inst, bool fin, const void *data, uint16_t size);
+enum wic_handshake_failure {
 
-/** Called by instance when websocket is open (client role) or when
- * a handshake has been received (server role).
+    WIC_HANDSHAKE_FAILURE_ABNORMAL_1,   /**< socket closed for reason WIC_CLOSE_ABNORMAL_1 */
+    WIC_HANDSHAKE_FAILURE_ABNORMAL_2,   /**< socket closed for reason WIC_CLOSE_ABNORMAL_2 */
+    WIC_HANDSHAKE_FAILURE_TLS,          /**< socket closed for some TLS specific reason */
+    WIC_HANDSHAKE_FAILURE_IRRELEVANT,   /**< another socket close reason not relevant to this mode */  
+    WIC_HANDSHAKE_FAILURE_PROTOCOL,     /**< response was not HTTP as expected */
+    WIC_HANDSHAKE_FAILURE_UPGRADE       /**< response did not upgrade to websocket (e.g. perhaps it was a redirect) */
+};
+
+/** Binary or UTF8 message received
+ *
+ * @param[in] inst
+ * @param[in] encoding  binary or utf8
+ * @param[in] fin       true if the final fragment
+ * @param[in] data  
+ * @param[in] size      size of data
+ *
+ * @retval true     message accepted
+ * @retval false    host is blocked and cannot receive
+ *
+ * This function has a return value to indicate if the host was ready
+ * to accept the message. If the host returns false the message
+ * will remain buffered in wic_inst and will be passed to this function
+ * next time wic_parse is called.
+ *
+ * The behaviour can be used to implement 'back-pressure' on messages received.
+ * For example, the host may queue received messages and the queue may
+ * become full. In this situation wic should block (i.e. stop parsing
+ * new input data) to ensure that messages are not dropped.
+ *
+ * */
+typedef bool (*wic_on_message_fn)(struct wic_inst *inst, enum wic_encoding encoding, bool fin, const char *data, uint16_t size);
+
+/** Websocket open event
  *
  * Regardless of role, wic_get_state() called from this handler will
  * return WIC_STATE_READY. This means, among other things, that
@@ -168,9 +218,18 @@ typedef void (*wic_on_binary_fn)(struct wic_inst *inst, bool fin, const void *da
  * */
 typedef void (*wic_on_open_fn)(struct wic_inst *inst);
 
-/** Called by instance to indicate that websocket is now closed
+/** Handshake failed event
  *
- * This handler should take care of closing the underlying transport.
+ * @param[in] inst
+ * @param[in] reason
+ *
+ * */
+typedef void (*wic_on_handshake_failure_fn)(struct wic_inst *inst, enum wic_handshake_failure reason);
+
+/** Websocket closed event
+ *
+ * The websocket was previously open, this message indicates that it is
+ * now closed.
  * 
  * @param[in] inst
  * @param[in] code      
@@ -180,22 +239,72 @@ typedef void (*wic_on_open_fn)(struct wic_inst *inst);
  * */
 typedef void (*wic_on_close_fn)(struct wic_inst *inst, uint16_t code, const char *reason, uint16_t size);
 
-/** Called by instance to write data to underlying transport
+/** Close transport event
+ *
+ * Use this event to close the underlying transport. 
  *
  * @param[in] inst
+ * 
+ * */
+typedef void (*wic_on_close_transport_fn)(struct wic_inst *inst);
+
+/** Release buffer by sending it.
+ *
+ * If size is zero, it means WIC is releasing a buffer but not sending
+ * anything.
+ * 
+ * @param[in] inst
  * @param[in] data
- * @param[in] size  size of data
+ * @param[in] size  size of data (may be zero)
+ * @param[in] type  may be used for prioritisation
  *
  * */
-typedef void (*wic_write_fn)(struct wic_inst *inst, const void *data, size_t size);
+typedef void (*wic_on_send_fn)(struct wic_inst *inst, const void *data, size_t size, enum wic_buffer type);
 
-/** Called by instance to get a 32bit random number
+/** Get a buffer of a minimum size for transporting a particular
+ * frame type.
+ *
+ * If WIC does not know the size required, it will set min_size to 0. This
+ * means provide the largest buffer. At the moment this only happens
+ * during the handshake (i.e. type == WIC_FRAME_TYPE_HTTP).
+ *
+ * wic_on_send_fn will always be called after this handler. This is
+ * this is to provide an opportunity to free any allocates made in this
+ * handler.
+ * 
+ * @param[in] inst
+ * @param[in] min_size  buffer should be at least this size
+ * @param[in] type      what the memory is used for
+ * @param[in] max_size  size of returned memory
+ *
+ * @return pointer to memory
+ *
+ * @retval NULL     no memory available for this min_size and type
+ *
+ * */
+typedef void *(*wic_on_buffer_fn)(struct wic_inst *inst, size_t min_size, enum wic_buffer type, size_t *max_size);
+
+/** Called to get a 32bit random number
  *
  * @param[in] inst
  * @return random number
  *
  * */
 typedef uint32_t (*wic_rand_fn)(struct wic_inst *inst);
+
+/** A ping was received and WIC responded with a pong
+ *
+ * @param[in] inst
+ *
+ * */
+typedef void (*wic_on_ping_fn)(struct wic_inst *inst);
+
+/** A pong was received
+ *
+ * @param[in] inst
+ *
+ * */
+typedef void (*wic_on_pong_fn)(struct wic_inst *inst);
 
 /** An instance is either a client or a server */
 enum wic_role {
@@ -204,55 +313,60 @@ enum wic_role {
     WIC_ROLE_SERVER     /**< Server role */
 };
 
+/** URL schema */
+enum wic_schema {
+    WIC_SCHEMA_HTTP,
+    WIC_SCHEMA_HTTPS,
+    WIC_SCHEMA_WS,
+    WIC_SCHEMA_WSS
+};
+
 /** wic_init() argument */
 struct wic_init_arg {
 
-    /** Buffer used to store received frame payload */
+    /** Buffer used to store received frame payload and received handshake */
     void *rx;    
 
-    /** Maximum size of rx
-     *
-     * 
-     *
-     * */
+    /** Maximum size of rx payload and received handshake */
     size_t rx_max;      
 
-    /** Buffer used to assemble frames before writing to transport */
-    void *tx;    
+    /** **OPTIONAL** handler called when text or binary is received */
+    wic_on_message_fn on_message;
 
-    /** Maximum size of tx
-     *
-     * Recommend that this be no less than (wic_init_arg.rx_max + 4) if you
-     * wish to be able to echo a received message.
-     * 
-     * */
-    size_t tx_max;      
-
-    /** **OPTIONAL** pointer to text handler */
-    wic_on_text_fn on_text;
-
-    /** **OPTIONAL** pointer to binary handler */
-    wic_on_binary_fn on_binary;
-
-    /** **OPTIONAL** pointer to open event handler */
+    /** **OPTIONAL** handler called when socket becomes open/established */
     wic_on_open_fn on_open;
 
-    /** **OPTIONAL** pointer to close event handler */
+    /** **OPTIONAL** handler called when open/established socket becomes closed */
     wic_on_close_fn on_close;
 
-    /** Pointer to function that writes to transport */
-    wic_write_fn write;
+    /** **OPTIONAL** handler called underlying transport should be closed */
+    wic_on_close_transport_fn on_close_transport;
 
-    /** **OPTIONAL** pointer to function that returns random */
+    /** **OPTIONAL** handler called when handshake fails */
+    wic_on_handshake_failure_fn on_handshake_failure;
+
+    /** **OPTIONAL** handler called when ping is received */
+    wic_on_ping_fn on_ping;
+
+    /** **OPTIONAL** handler called when pong is received */
+    wic_on_pong_fn on_pong;
+
+    /** **OPTIONAL** handler called to get a random number */
     wic_rand_fn rand;
 
-    /** **OPTIONAL** pointer to any data you wish to associate with instance */
+    /** handler called to write message to transport */
+    wic_on_send_fn on_send;
+
+    /** handler called to get a buffer (prior to calling wic_init_arg.on_send) */
+    wic_on_buffer_fn on_buffer;
+
+    /** **OPTIONAL** any data you wish to associate with instance */
     void *app;
 
-    /** **OPTIONAL** null-terminate target URL required for client role */
+    /** **OPTIONAL** null-terminated URL required for client role */
     const char *url;
 
-    /** Instance can be client or server */
+    /** instance can be client or server */
     enum wic_role role;
 };
 
@@ -354,6 +468,17 @@ enum wic_header_state {
     WIC_HEADER_STATE_VALUE
 };
 
+enum wic_status {
+
+    WIC_STATUS_SUCCESS,         /**< operation complete successfully */
+    WIC_STATUS_NOT_OPEN,        /**< socket is not open */
+    WIC_STATUS_TOO_LARGE,       /**< message too large to send */
+    WIC_STATUS_WOULD_BLOCK,     /**< buffer not available */
+    WIC_STATUS_BAD_STATE,
+    WIC_STATUS_BAD_INPUT,
+    WIC_STATUS_TIMEOUT
+};
+
 /** WIC instance */
 struct wic_inst {
 
@@ -363,21 +488,25 @@ struct wic_inst {
 
     struct wic_rx_frame rx;
 
-    struct wic_stream tx;
-
-    wic_on_text_fn on_text;
-    wic_on_binary_fn on_binary;
+    wic_on_message_fn on_message;
     
     wic_on_open_fn on_open;
     wic_on_close_fn on_close;
-
-    wic_write_fn write;
+    wic_on_close_transport_fn on_close_transport;
+    wic_on_handshake_failure_fn on_handshake_failure;
+    
+    wic_on_send_fn on_send;
+    wic_on_buffer_fn on_buffer;
+    
     wic_rand_fn rand;
+
+    wic_on_ping_fn on_ping;
+    wic_on_pong_fn on_pong;
     
     void *app;
 
-    const char *url;    
-    const char *schema;
+    const char *url;
+    enum wic_schema schema;    
     uint16_t status_code;
     uint16_t port;
 
@@ -388,6 +517,7 @@ struct wic_inst {
 
     enum wic_opcode frag;
     uint16_t pos;
+    uint16_t tx_max;
 
     uint16_t utf8_tx;
     uint16_t utf8_rx;
@@ -458,16 +588,14 @@ const char *wic_get_url_hostname(const struct wic_inst *self);
  * */
 uint16_t wic_get_url_port(const struct wic_inst *self);
 
-/** Get URL schema string
+/** Get URL schema
  *
  * @param[in] self
  *
- * @return null-terminated URL schema
- *
- * @retval NULL     unknown schema
+ * @return #wic_schema
  *
  * */
-const char *wic_get_url_schema(const struct wic_inst *self);
+enum wic_schema wic_get_url_schema(const struct wic_inst *self);
 
 /** Get a redirect URL if the server handshake response was a valid
  * redirect.
@@ -485,11 +613,10 @@ const char *wic_get_redirect_url(const struct wic_inst *self);
  *
  * @param[in] self
  *
- * @retval true     driver started
- * @retval false
+ * @return #wic_status
  *
  * */
-bool wic_start(struct wic_inst *self);
+enum wic_status wic_start(struct wic_inst *self);
 
 /** Receive data from socket
  *
@@ -497,8 +624,17 @@ bool wic_start(struct wic_inst *self);
  * @param[in] data
  * @param[in] size      size of data
  *
+ * @return bytes parsed
+ *
+ * This function will parse one wic frame or message at a time. It is the
+ * responsibility of the integrator to track how many bytes have been
+ * consumed, and to call wic_parse again to continue parsing.
+ *
+ * If no bytes are consumed it means that wic_inst is either blocked
+ * (see #wic_on_message_fn) or that wic_inst has entered closed state.
+ *
  * */
-void wic_parse(struct wic_inst *self, const void *data, size_t size);
+size_t wic_parse(struct wic_inst *self, const void *data, size_t size);
 
 /** Normal close (1000)
  *
@@ -526,43 +662,47 @@ void wic_close(struct wic_inst *self);
  * - #WIC_CLOSE_GOING_AWAY
  * - #WIC_CLOSE_PROTOCOL_ERROR
  * - #WIC_CLOSE_UNSUPPORTED
- * - #WIC_CLOSE_NO_STATUS
- * - #WIC_CLOSE_ABNORMAL
+ * - #WIC_CLOSE_ABNORMAL_1
+ * - #WIC_CLOSE_ABNORMAL_2
+ * - #WIC_CLOSE_TLS
  * - #WIC_CLOSE_INVALID_DATA
  * - #WIC_CLOSE_POLICY
  * - #WIC_CLOSE_TOO_BIG
  * - #WIC_CLOSE_EXTENSION_REQUIRED
  * - #WIC_CLOSE_UNEXPECTED_EXCEPTION
- * - #WIC_CLOSE_TRANSPORT_ERROR
  * 
  * */
 void wic_close_with_reason(struct wic_inst *self, uint16_t code, const char *reason, uint16_t size);
 
-/** Send a binary message
- *
- * @param[in] self
- * @param[in] fin   true if final fragment
- * @param[in] data
- * @param[in] size  size of data
- *
- * @retval true     message sent
- * @retval false    
+/**
+ * Equivalent to calling wic_send() with WIC_ENCODING_BINARY encoding.
  *
  * */
-bool wic_send_binary(struct wic_inst *self, bool fin, const void *data, uint16_t size);
+enum wic_status wic_send_binary(struct wic_inst *self, bool fin, const void *data, uint16_t size);
 
-/** Send a text message
- *
- * @param[in] self
- * @param[in] fin   true if final fragment
- * @param[in] data
- * @param[in] size  size of data
- *
- * @retval true     message sent
- * @retval false    
+/**
+ * Equivalent to calling wic_send() with WIC_ENCODING_UTF8 encoding.
  *
  * */
-bool wic_send_text(struct wic_inst *self, bool fin, const char *data, uint16_t size);
+enum wic_status wic_send_text(struct wic_inst *self, bool fin, const char *data, uint16_t size);
+
+/** Send a message with either UTF or binary encoding
+ *
+ * @param[in] self
+ * @param[in] encoding  encoding of data
+ * @param[in] fin       true if final fragment
+ * @param[in] data
+ * @param[in] size      size of data
+ *
+ * @return #wic_status
+ *
+ * @retval WIC_STATUS_SUCCESS
+ * @retval WIC_STATUS_NOT_OPEN
+ * @retval WIC_STATUS_WOULD_BLOCK
+ * @retval WIC_STATUS_TOO_LARGE    
+ *
+ * */
+enum wic_status wic_send(struct wic_inst *self, enum wic_encoding encoding, bool fin, const char *data, uint16_t size);
 
 /** Send a Ping message
  *
@@ -571,13 +711,17 @@ bool wic_send_text(struct wic_inst *self, bool fin, const char *data, uint16_t s
  *
  * @param[in] self
  *
- * @retval true     message sent
- * @retval false
+ * @return #wic_status
+ *
+ * @retval WIC_STATUS_SUCCESS
+ * @retval WIC_STATUS_NOT_OPEN
+ * @retval WIC_STATUS_WOULD_BLOCK
+ * @retval WIC_STATUS_TOO_LARGE
  *
  * @see wic_send_ping_with_payload().
  * 
  * */
-bool wic_send_ping(struct wic_inst *self);
+enum wic_status wic_send_ping(struct wic_inst *self);
 
 /** Send a Ping message with application data
  * 
@@ -585,42 +729,17 @@ bool wic_send_ping(struct wic_inst *self);
  * @param[in] data
  * @param[in] size  size of data
  *
- * @retval true     message sent
- * @retval false
+ * @return #wic_status
+ *
+ * @retval WIC_STATUS_SUCCESS
+ * @retval WIC_STATUS_NOT_OPEN
+ * @retval WIC_STATUS_WOULD_BLOCK
+ * @retval WIC_STATUS_TOO_LARGE
  *
  * @see wic_send_ping()
  *
  * */
-bool wic_send_ping_with_payload(struct wic_inst *self, const void *data, uint16_t size);
-
-/** Send a Pong message
- *
- * A peer will not answer a Pong. This is useful for implementing a
- * non-confirmed "keep alive" feature.
- *
- * @param[in] self
- *
- * @retval true     message sent
- * @retval false 
- *
- * @see wic_send_pong_with_payload().
- * 
- * */
-bool wic_send_pong(struct wic_inst *self);
-
-/** Send a Pong message with application data
- *
- * @param[in] self
- * @param[in] data
- * @param[in] size  size of data
- *
- * @retval true     message sent
- * @retval false
- *
- * @see wic_send_pong()
- *
- * */
-bool wic_send_pong_with_payload(struct wic_inst *self, const void *data, uint16_t size);
+enum wic_status wic_send_ping_with_payload(struct wic_inst *self, const void *data, uint16_t size);
 
 /** Set a header key-value that will be either sent as either:
  *

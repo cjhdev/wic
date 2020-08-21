@@ -18,7 +18,7 @@ CFLAGS += -D'WIC_PORT_INCLUDE="port.h"'
 SRC := $(notdir $(wildcard $(DIR_ROOT)/src/*.c)) transport.c
 OBJ := $(SRC:.c=.o)
 
-all: $(addprefix bin/, client server)
+all: $(addprefix bin/, client)
 
 bin/client: $(addprefix build/,$(OBJ) client.o)
 	$(CC) $(LDFLAGS) $^ -o $@

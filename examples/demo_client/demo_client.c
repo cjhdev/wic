@@ -27,16 +27,20 @@
 #include <string.h>
 #include <signal.h>
 
+bool log_enabled = true;
+
 static void on_open_handler(struct wic_inst *inst);
-static void on_text_handler(struct wic_inst *inst, bool fin, const char *data, uint16_t size);
+static bool on_message_handler(struct wic_inst *inst, enum wic_encoding encoding, bool fin, const char *data, uint16_t size);
 static void on_close_handler(struct wic_inst *inst, uint16_t code, const char *reason, uint16_t size);
-static void do_write(struct wic_inst *inst, const void *data, size_t size);
+static void on_close_transport_handler(struct wic_inst *inst);
+static void on_send_handler(struct wic_inst *inst, const void *data, size_t size, enum wic_buffer type);
+static void on_handshake_failure_handler(struct wic_inst *inst, enum wic_handshake_failure reason);
+static void *on_buffer_handler(struct wic_inst *inst, size_t min_size, enum wic_buffer type, size_t *max_size);
 
 int main(int argc, char **argv)
 {
-    bool open;
     int s, redirects = 3;
-    static uint8_t tx[1000], rx[1000];
+    static uint8_t rx[1000];
     static char url[1000] = "ws://echo.websocket.org/";
     struct wic_inst inst;
     struct wic_init_arg arg = {0};
@@ -46,12 +50,14 @@ int main(int argc, char **argv)
         strcpy(url, argv[1]);
     }
     
-    arg.tx = tx; arg.tx_max = sizeof(tx);    
     arg.rx = rx; arg.rx_max = sizeof(rx);    
-    arg.write = do_write;
-    arg.on_text = on_text_handler;        
+    arg.on_send = on_send_handler;
+    arg.on_buffer = on_buffer_handler;
+    arg.on_message = on_message_handler;        
     arg.on_open = on_open_handler;        
     arg.on_close = on_close_handler;        
+    arg.on_close_transport = on_close_transport_handler;        
+    arg.on_handshake_failure = on_handshake_failure_handler;
     arg.app = &s;
     arg.url = url;
     arg.role = WIC_ROLE_CLIENT;
@@ -70,21 +76,24 @@ int main(int argc, char **argv)
 
         (void)wic_set_header(&inst, &user_agent);
 
-        open = transport_open_client(
-            wic_get_url_schema(&inst),
-            wic_get_url_hostname(&inst),
-            wic_get_url_port(&inst),
-            &s
-        );
+        if(
+            transport_open_client(
+                wic_get_url_schema(&inst),
+                wic_get_url_hostname(&inst),
+                wic_get_url_port(&inst),
+                &s
+            )
+        ){
 
-        if(open){
+            if(wic_start(&inst) == WIC_STATUS_SUCCESS){
 
-            (void)wic_start(&inst);
+                while(transport_recv(s, &inst));
+            }
+            else{
 
-            while(transport_recv(s, &inst));
+                transport_close(&s);
+            }
         }
-
-        wic_close(&inst);
 
         if(wic_get_redirect_url(&inst) && redirects){
 
@@ -100,37 +109,63 @@ int main(int argc, char **argv)
     exit(EXIT_SUCCESS);
 }
 
-static void on_text_handler(struct wic_inst *inst, bool fin, const char *data, uint16_t size)
+static bool on_message_handler(struct wic_inst *inst, enum wic_encoding encoding, bool fin, const char *data, uint16_t size)
 {
-    printf("received text: %.*s\n", size, data);
+    if(encoding == WIC_ENCODING_UTF8){
+
+        LOG("received text: %.*s", size, data);
+    }
+
+    wic_close(inst);
+
+    return true;
+}
+
+static void on_handshake_failure_handler(struct wic_inst *inst, enum wic_handshake_failure reason)
+{
+    LOG("websocket handshake failed for reason %d", reason);
 }
 
 static void on_open_handler(struct wic_inst *inst)
 {
     const char *name, *value;
 
-    printf("received handshake:\n");
+    LOG("websocket is open");
+    
+    LOG("received handshake:");
 
     for(value = wic_get_next_header(inst, &name); value; value = wic_get_next_header(inst, &name)){
 
-        printf("%s: %s\n", name, value);
+        LOG("%s: %s", name, value);
     }
 
     const char msg[] = "hello world";
 
     wic_send_text(inst, true, msg, strlen(msg));
-    wic_close(inst);
 } 
 
 static void on_close_handler(struct wic_inst *inst, uint16_t code, const char *reason, uint16_t size)
 {
+    LOG("websocket closed for reason %u", code);
+}
+
+static void on_close_transport_handler(struct wic_inst *inst)
+{
     transport_close((int *)wic_get_app(inst));
 }
 
-static void do_write(struct wic_inst *inst, const void *data, size_t size)
+static void on_send_handler(struct wic_inst *inst, const void *data, size_t size, enum wic_buffer type)
 {
-    if(!transport_write(*(int *)wic_get_app(inst), data, size)){
+    LOG("sending buffer type %d", type);
 
-        wic_close(inst);
-    }
+    transport_write(*(int *)wic_get_app(inst), data, size);
+}
+
+static void *on_buffer_handler(struct wic_inst *inst, size_t min_size, enum wic_buffer type, size_t *max_size)
+{
+    static uint8_t tx[1000U];
+
+    *max_size = sizeof(tx);
+
+    return (min_size <= sizeof(tx)) ? tx : NULL;
 }

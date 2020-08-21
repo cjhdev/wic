@@ -1,431 +1,692 @@
-#include "mbed.h"
 #include "wic_client.hpp"
 
 #include <assert.h>
 
-const uint32_t WICClient::socket_open_flag = 1U;
+using namespace WIC;
+
+uint32_t time_since();
 
 /* constructors *******************************************************/
 
-WICClient::WICClient(NetworkInterface &interface) :
+ClientBase::ClientBase(NetworkInterface &interface, InputQueueBase& input_queue, OutputQueueBase& tx_queue, BufferBase& url) :
     interface(interface),
-    condition(mutex),
-    on_text_cb(nullptr),
-    on_binary_cb(nullptr),
-    on_open_cb(nullptr),
-    on_close_cb(nullptr)
-{
-    init_arg = {0};
-
-    init_arg.app = this;
-    
-    init_arg.tx = tx;
-    init_arg.tx_max = sizeof(tx);
-    init_arg.rx = rx;
-    init_arg.rx_max = sizeof(rx);
-
-    init_arg.on_open = handle_open;
-    init_arg.on_close = handle_close;
-    init_arg.on_text = handle_text;
-    init_arg.on_binary = handle_binary;
-
-    init_arg.write = handle_write;
-    init_arg.rand = handle_rand;
-    
-    init_arg.role = WIC_ROLE_CLIENT;
-
-    /* these will block on flags until needed */
-    writer_thread.start(callback(this, &WICClient::writer_task));
-    reader_thread.start(callback(this, &WICClient::reader_task));
-
-    event_thread.start(callback(&events, &EventQueue::dispatch_forever));
+    input_queue(input_queue),
+    tx_queue(tx_queue),    
+    url(url),
+    tls(&tcp),
+    socket(tcp),
+    writers(0, 1),
+    events(100 * EVENTS_EVENT_SIZE),
+    readers(readers_mutex)
+{                
+    socket.sigio(callback(this, &ClientBase::do_sigio));
+    worker_thread.start(callback(this, &ClientBase::worker_task));
+    //ticker.attach_us(callback(this, &ClientBase::do_tick), 1000000UL);
 }
 
-/* static methods *****************************************************/
+/* static protected ***************************************************/
 
-WICClient *
-WICClient::to_obj(struct wic_inst *self)
+ClientBase *
+ClientBase::to_obj(struct wic_inst *self)
 {       
-    return static_cast<WICClient *>(wic_get_app(self));
+    return static_cast<ClientBase *>(wic_get_app(self));
 }
 
 void
-WICClient::handle_write(struct wic_inst *self, const void *data, size_t size)
+ClientBase::handle_send(struct wic_inst *self, const void *data, size_t size, enum wic_buffer type)
 {
-    WICClient *obj = to_obj(self);
+    ClientBase *obj = to_obj(self);
 
-    // this needs to return immediately if there are no buffers
-    TXBuffer *buf = obj->output.alloc();
+    if(obj->tx){
 
-    (void)memcpy(buf->data, data, size);
-    buf->size = size;
+        obj->tx->size = size;
 
-    obj->output.put(buf);            
+        if(size == 0){
+
+            obj->tx_queue.free(obj->tx);
+        }
+        else{
+
+            obj->tx_queue.put(obj->tx);
+        }
+
+        obj->tx = nullptr;
+        obj->do_work();
+    }                
+}
+
+void *
+ClientBase::handle_buffer(struct wic_inst *self, size_t size, enum wic_buffer type, size_t *max)
+{
+    void *retval = NULL;
+    ClientBase *obj = to_obj(self);
+
+    obj->tx = obj->tx_queue.alloc(type, size, max);
+
+    if(obj->tx){
+
+        retval = obj->tx->data;
+    }
+
+    return retval;
 }
 
 uint32_t
-WICClient::handle_rand(struct wic_inst *self)
+ClientBase::handle_rand(struct wic_inst *self)
 {
-    // fixme
-    return 0xaaaaaaaa;
+    return rand();
 }
 
 void
-WICClient::handle_open(struct wic_inst *self)
+ClientBase::handle_handshake_failure(struct wic_inst *self, enum wic_handshake_failure reason)
 {
-    WICClient *obj = to_obj(self);
+    ClientBase *obj = to_obj(self);
 
     obj->events.cancel(obj->timeout_id);
-    
-    if(obj->on_open_cb){
 
-        obj->on_open_cb();
-    }
-}
+    obj->job.handshake_failure_reason = reason;
 
-void
-WICClient::handle_close(struct wic_inst *self, uint16_t code, const char *reason, uint16_t size)
-{
-    WICClient *obj = to_obj(self);
-    obj->sock.close();
-
-    if(obj->on_close_cb){
-
-        obj->on_close_cb(code, reason, size);
-    }
-}
+    switch(reason){
+    default:
+    /* no response within timeout (either socket or message timeout) */
+    case WIC_HANDSHAKE_FAILURE_ABNORMAL_1:
+        obj->job.retval = NSAPI_ERROR_CONNECTION_TIMEOUT;
+        break;
         
-void
-WICClient::handle_text(struct wic_inst *self, bool fin, const char *data, uint16_t size)
-{
-    WICClient *obj = to_obj(self);
-    
-    if(obj->on_text_cb){
-
-        obj->on_text_cb(fin, data, size);
-    }    
-}
+    /* socket closed / transport errored */
+    case WIC_HANDSHAKE_FAILURE_ABNORMAL_2:
+        obj->job.retval = NSAPI_ERROR_CONNECTION_LOST;
+        break;
         
-void
-WICClient::handle_binary(struct wic_inst *self, bool fin, const void *data, uint16_t size)
-{
-    WICClient *obj = to_obj(self);
+    /* response was not HTTP */
+    case WIC_HANDSHAKE_FAILURE_PROTOCOL:
+        obj->job.retval = NSAPI_ERROR_UNSUPPORTED;
+        break;
     
-    if(obj->on_binary_cb){
-
-        obj->on_binary_cb(fin, data, size);
-    }   
-}
-
-/* protected instance methods *****************************************/
-
-void
-WICClient::do_parse()
-{
-    osEvent evt = input.get();
-
-    if(evt.status == osEventMail){
-
-        RXBuffer *buf = (RXBuffer *)evt.value.p;
-
-        wic_parse(&inst, buf->data, buf->size);
-
-        input.free(buf);
+    /* connection was not upgraded */
+    case WIC_HANDSHAKE_FAILURE_UPGRADE:
+        obj->job.retval = NSAPI_ERROR_UNSUPPORTED;
+        break;
     }
+
+    obj->job.done = true;
+    obj->notify_writers();
+
+    obj->state = CLOSING;
 }
+
+void
+ClientBase::handle_open(struct wic_inst *self)
+{
+    ClientBase *obj = to_obj(self);
+
+    obj->events.cancel(obj->timeout_id);
+
+    obj->state = OPEN;
+    
+    obj->job.retval = NSAPI_ERROR_OK;
+    obj->job.done = true;
+    obj->notify_writers();
+}
+
+bool
+ClientBase::handle_message(struct wic_inst *self, enum wic_encoding encoding, bool fin, const char *data, uint16_t size)
+{
+    bool retval = false;
+    ClientBase *obj = to_obj(self);
+    BufferBase *ptr = obj->input_queue.alloc();
+
+    if(ptr){
+
+        ptr->init(data, size, encoding, fin);
         
-void
-WICClient::do_close(bool &done)
-{
-    wic_close(&inst);
-    done = true;
-    condition.notify_all();
+        obj->input_queue.put(ptr);
+
+        retval = true;
+    }
+
+    obj->notify_readers();
+
+    return retval;
 }
 
 void
-WICClient::do_close_with_reason(bool &done, uint16_t code, const char *reason, uint16_t size)
+ClientBase::handle_close(struct wic_inst *self, uint16_t code, const char *reason, uint16_t size)
 {
-    wic_close_with_reason(&inst, code, reason, size);
-    done = true;
-    condition.notify_all();
+    ClientBase *obj = to_obj(self);
+
+    obj->state = CLOSING;
 }
 
 void
-WICClient::do_timeout(bool &done)
+ClientBase::handle_close_transport(struct wic_inst *self)
 {
-    do_close(done);
+    /* this ensures that the output queue is flushed */
+    to_obj(self)->tx_queue.put(nullptr);
+    to_obj(self)->do_work();     
 }
 
 void
-WICClient::do_open(bool &done, bool &retval)
+ClientBase::handle_ping(struct wic_inst *self)
+{
+    //ClientBase *obj = to_obj(self);
+}
+
+void
+ClientBase::handle_pong(struct wic_inst *self)
+{
+    //ClientBase *obj = to_obj(self);
+}
+
+/* protected **********************************************************/
+
+void
+ClientBase::do_work()
+{
+    work.release();
+}
+
+void
+ClientBase::do_close_socket()
+{
+    socket.close();            
+    job.done = true;
+    state = CLOSED;
+    notify_readers();    
+    notify_writers();    
+}
+
+void
+ClientBase::do_open()
 {
     SocketAddress a;
     nsapi_error_t err;
 
+    if(!rx){
+        
+        rx = input_queue.alloc();
+    }
+
+    struct wic_init_arg init_arg = {0};
+
+    if(state != CLOSED){
+
+        switch(state){
+        default:
+        case OPENING:
+        case CLOSING:
+            job.retval = NSAPI_ERROR_BUSY;
+            break;
+        case OPEN:
+            job.retval = NSAPI_ERROR_IS_CONNECTED;
+            break;
+        }
+
+        job.done = true;
+        notify_writers();
+        return;
+    }
+
+    flush_output_queue();
+
+    init_arg.app = this;
+    
+    init_arg.rx = rx->data;
+    init_arg.rx_max = rx->max;
+
+    init_arg.on_open = handle_open;
+    init_arg.on_close = handle_close;
+    init_arg.on_message = handle_message;
+    init_arg.on_close_transport = handle_close_transport;
+    init_arg.on_handshake_failure = handle_handshake_failure;
+
+    init_arg.on_send = handle_send;
+    init_arg.on_buffer = handle_buffer;
+    init_arg.rand = handle_rand;
+    
+    init_arg.role = WIC_ROLE_CLIENT;
+    
+    init_arg.url = (const char *)url.data;
+    
     if(!wic_init(&inst, &init_arg)){
 
-        done = true;
+        job.retval = NSAPI_ERROR_PARAMETER;
+        do_close_socket();
         return;
     }
 
     err = interface.gethostbyname(wic_get_url_hostname(&inst), &a);
 
     if(err != NSAPI_ERROR_OK){
-
-        done = true;
+        
+        job.retval = err;
+        do_close_socket();
         return;
     }
-
-    sock.open(&interface);
 
     a.set_port(wic_get_url_port(&inst));
 
-    err = sock.connect(a);
+    switch(wic_get_url_schema(&inst)){
+    default:
+    case WIC_SCHEMA_HTTP:
+    case WIC_SCHEMA_WS:
+        socket = tcp;                    
+        break;    
+    case WIC_SCHEMA_HTTPS:    
+    case WIC_SCHEMA_WSS:
+        socket = tls;
+        break;
+    }
+
+    (void)tcp.open(&interface);
+
+    err = socket.connect(a);
 
     if(err != NSAPI_ERROR_OK){
 
-        sock.close();
-        done = true;
+        job.retval = err;
+        do_close_socket();
         return;
     }
 
-    if(!wic_start(&inst)){
+    socket.set_blocking(false);
 
-        sock.close();
-        done = true;
+    job.status = wic_start(&inst);
+
+    if(job.status != WIC_STATUS_SUCCESS){
+
+        job.retval = NSAPI_ERROR_OK;
+        do_close_socket();
         return;
     }
 
-    flags.set(socket_open_flag);
+    state = OPENING;
 
-    timeout_id = events.call_in(5000, callback(this, &WICClient::do_timeout), done);
+    timeout_id = events.call_in(5000, callback(this, &ClientBase::do_handshake_timeout));   
 }
 
 void
-WICClient::do_tick()
-{    
-}
-
-void
-WICClient::do_send_text(bool &done, bool &retval, bool fin, const char *value, uint16_t size)
+ClientBase::do_close()
 {
-    retval = wic_send_text(&inst, fin, value, size);
-    done = true;
-    condition.notify_all();        
+    switch(wic_get_state(&inst)){
+    case WIC_STATE_READY:
+    case WIC_STATE_OPEN:
+        wic_close(&inst);
+        break;
+    case WIC_STATE_INIT:
+    case WIC_STATE_CLOSED:
+    default:
+        job.retval = NSAPI_ERROR_OK;
+        job.done = true;
+        notify_writers();
+        break;
+    }    
 }
 
 void
-WICClient::do_send_binary(bool &done, bool &retval, bool fin, const void *value, uint16_t size)
+ClientBase::do_send(enum wic_encoding encoding, bool fin, const char *value, uint16_t size)
 {
-    retval = wic_send_binary(&inst, fin, value, size);
-    done = true;
-    condition.notify_all();        
+    job.status = wic_send(&inst, encoding, fin, value, size);
+    job.done = true;
+    notify_writers();
 }
 
 void
-WICClient::do_signal_socket_error(uint16_t code)
+ClientBase::do_handshake_timeout()
 {
-    wic_close_with_reason(&inst, code, NULL, 0U);
+    wic_close_with_reason(&inst, WIC_CLOSE_ABNORMAL_1, NULL, 0U);
 }
 
 void
-WICClient::writer_task(void)
-{
-    osEvent evt;
-    TXBuffer *buf;
-    
-    for(;;){
-
-        flags.wait_any(socket_open_flag);
-
-        for(;;){
-
-            evt = output.get();
-            buf = (TXBuffer *)evt.value.p;
-            
-            if(sock.send(buf->data, buf->size) != NSAPI_ERROR_OK){
-
-                events.call(callback(this, &WICClient::do_signal_socket_error), WIC_CLOSE_PROTOCOL_ERROR);
-            }                
-        
-            output.free(buf);
-        }
-
-        flags.clear(socket_open_flag);
-    }
-}        
-        
-void
-WICClient::reader_task(void)
+ClientBase::worker_task()
 {
     nsapi_size_or_error_t retval;
-    RXBuffer *buf;
+    size_t tx_pos = 0U;
+    size_t rx_pos = 0U;
+    RXBuffer *_rx = nullptr;
+    BufferBase *_tx = nullptr;
 
     for(;;){
 
-        flags.wait_any(socket_open_flag);
+        work.acquire();
 
-        for(;;){
+        events.dispatch(0);
 
-            buf = input.alloc();
+        /* try to get an RX buffer */
+        if(!_rx){
 
-            retval = sock.recv(buf->data, sizeof(buf->data));
+            _rx = rx_pool.alloc();
 
-            if(retval < 0){
+            if(_rx){
 
-                events.call(callback(this, &WICClient::do_signal_socket_error), WIC_CLOSE_PROTOCOL_ERROR);
-
-                input.free(buf);    
-                break;
+                _rx = new(_rx)RXBuffer;
             }
             
-            buf->size = retval;
-
-            input.put(buf);
-            events.call(this, &WICClient::do_parse);                
+            rx_pos = 0U;
         }
 
-        flags.clear(socket_open_flag);
+        /* try to read the socket if there is a zeroed RX buffer */
+        if(_rx && (_rx->size == 0U)){
+
+            retval = socket.recv(_rx->data, _rx->max);
+
+            if(retval > 0){
+
+                _rx->size = retval;
+            }
+            else{
+
+                switch(retval){
+                case NSAPI_ERROR_WOULD_BLOCK:
+                case NSAPI_ERROR_NO_SOCKET:
+                    break;
+                default:
+
+                    wic_close_with_reason(&inst, WIC_CLOSE_ABNORMAL_2, NULL, 0U);
+                    do_work();
+                    rx_pool.free(_rx);
+                    _rx = nullptr;
+                }
+            }            
+        }
+
+        /* try to parse the data read from socket */
+        if(_rx && (_rx->size > 0U)){
+
+            size_t bytes = wic_parse(&inst, &_rx->data[rx_pos], _rx->size - rx_pos);
+
+            rx_pos += bytes;
+
+            if(rx_pos == _rx->size){
+
+                rx_pool.free(_rx);                
+                _rx = nullptr;
+                do_work();
+            }
+        }
+
+        /* try to get a TX buffer */
+        if(!_tx){
+
+            bool close;
+
+            _tx = tx_queue.get(close);
+            tx_pos = 0U;
+
+            if(close){
+
+                for(_tx = tx_queue.get(close); _tx; _tx = tx_queue.get(close)){
+
+                    tx_queue.free(_tx);
+                }
+
+                do_close_socket();
+                do_work();
+            }            
+        }
+
+        /* try to write the TX buffer to the socket */
+        if(_tx){
+
+            retval = socket.send(&_tx->data[tx_pos], _tx->size - tx_pos);
+
+            if(retval >= 0){
+
+                tx_pos += retval;
+
+                if(tx_pos == _tx->size){
+
+                    tx_queue.free(_tx);
+                    _tx = nullptr;
+                    notify_writers();
+                    do_work();
+                }
+            }
+            else{
+
+                switch(retval){
+                case NSAPI_ERROR_WOULD_BLOCK:
+                    break;
+                default:
+
+                    tx_queue.free(_tx);
+                    _tx = nullptr;
+                    notify_writers();
+                    do_work();
+                    break;
+                }                    
+            }
+        }    
     }
 }
 
-/* public instance methods ********************************************/
+/* public *************************************************************/
 
-bool
-WICClient::open(const char *url)
+nsapi_error_t
+ClientBase::connect(const char *url)
 {
-    bool retval = false;
-    bool done = false;
-    
-    mutex.lock();
+    uint32_t n = max_redirects;
+    nsapi_error_t retval = NSAPI_ERROR_PARAMETER;
+    const char *url_ptr = url;
 
-    events.call(callback(this, &WICClient::do_open), done, retval);
+    writers_mutex.lock();
 
-    while(!done){
-    
-        condition.wait();
+    for(;;){
+
+        job = {};
+
+        /* URLs cannot be larger than what we can
+         * buffer.
+         *
+         * We buffer so as to support
+         * redirects */
+        if(strlen(url_ptr) >= this->url.max){
+
+            break;
+        }
+
+        this->url.size = strlen(url_ptr)+1U;
+        strcpy((char *)this->url.data, url_ptr);
+        
+        events.call(callback(this, &ClientBase::do_open));
+        do_work();
+
+        while(!job.done){
+
+            wait();
+        }
+
+        if(
+            (job.handshake_failure_reason == WIC_HANDSHAKE_FAILURE_UPGRADE)
+            &&
+            (wic_get_redirect_url(&inst) != NULL)
+            &&
+            (n > 0U)
+        ){
+
+            n--;
+            url_ptr = wic_get_redirect_url(&inst);
+        }
+        else{
+
+            retval = job.retval;
+            break;
+        }
     }
 
-    mutex.unlock();
-
+    writers_mutex.unlock();
+    
     return retval;
 }
 
 void
-WICClient::close()
+ClientBase::close()
 {
-    mutex.lock();
+    writers_mutex.lock();
 
-    bool done = false;
+    job = {0};
 
-    events.call(callback(this, &WICClient::do_close), done);
+    events.call(callback(this, &ClientBase::do_close));
+    do_work();
 
-    while(!done){
-    
-        condition.wait();
+    while(!job.done){
+
+        wait();
     }
 
-    mutex.unlock();
+    writers_mutex.unlock();
 }
 
-bool
-WICClient::text(const char *value)
+nsapi_size_or_error_t
+ClientBase::send(const char *data, uint16_t size, enum wic_encoding encoding, bool fin)
 {
-    return text(true, value);
-}
+    nsapi_size_or_error_t retval = NSAPI_ERROR_PARAMETER;
 
-bool
-WICClient::text(const char *value, uint16_t size)
-{
-    return text(true, value, size);
-}
+    writers_mutex.lock();
 
-bool
-WICClient::text(bool fin, const char *value)
-{   
-    bool retval = false;
-    int size = strlen(value);
+    for(;;){
 
-    if((size >= 0) && (size <= UINT16_MAX)){
+        job = {0};
 
-        retval = text(fin, value, (uint16_t)size);
+        events.call(callback(this, &ClientBase::do_send), encoding, fin, data, size);
+
+        do_work();
+
+        while(!job.done){
+
+            wait();
+        }
+
+        if(job.status == WIC_STATUS_WOULD_BLOCK){
+
+            wait();
+        }
+        else{
+
+            switch(job.status){
+            case WIC_STATUS_SUCCESS:
+                retval = size;
+                break;
+            default:
+                retval = NSAPI_ERROR_PARAMETER;
+                break;            
+            }
+
+            break;
+        }
     }
+
+    writers_mutex.unlock();
 
     return retval;
 }
 
 bool
-WICClient::text(bool fin, const char *value, uint16_t size)
+ClientBase::try_get(nsapi_size_or_error_t &retval, enum wic_encoding& encoding, bool &fin, char *buffer, size_t max)
 {
-    bool retval = false;
-    bool done = false;
+    bool success = false;
+    osEvent evt;
+    BufferBase *ptr;    
 
-    mutex.lock();
+    evt = input_queue.get(0);
 
-    events.call(callback(this, &WICClient::do_send_text), done, retval, fin, value, size);
+    if(evt.status == osEventMail){
 
-    while(!done){
-    
-        condition.wait();
+        ptr = static_cast<BufferBase *>(evt.value.p);
+
+        encoding = ptr->encoding;
+        fin = ptr->fin;
+        retval = (ptr->size > max) ? max : ptr->size;
+        (void)memcpy(buffer, ptr->data, retval);
+        
+        input_queue.free(ptr);
+        do_work();
+
+        success = true;                
+    }
+    else{
+
+        retval = NSAPI_ERROR_WOULD_BLOCK;
     }
 
-    mutex.unlock();
+    return success;
+}
 
+
+nsapi_size_or_error_t
+ClientBase::recv(enum wic_encoding& encoding, bool &fin, char *buffer, size_t max, uint32_t timeout)
+{
+    nsapi_size_or_error_t retval;    
+    uint64_t until = 0;
+
+    readers_mutex.lock();
+
+    if(timeout != osWaitForever){
+
+        until = Kernel::get_ms_count() + timeout;
+    }
+
+    for(;;){
+
+        if(try_get(retval, encoding, fin, buffer, max)){
+
+            break;
+        }
+        else{
+
+            if(state == CLOSED){
+
+                retval = NSAPI_ERROR_NO_CONNECTION;
+                break;
+            }
+        
+            if(timeout == osWaitForever){
+
+                readers.wait();
+            }
+            else if(readers.wait_until(until)){
+
+                retval = (state == OPEN) ? NSAPI_ERROR_WOULD_BLOCK : NSAPI_ERROR_NO_CONNECTION;
+                break;                
+            }
+            else{
+
+                //go around
+            }
+        }
+    }
+
+    readers_mutex.unlock();
+    
     return retval;
 }
 
 bool
-WICClient::binary(const void *value, uint16_t size)
+ClientBase::is_open()
 {
-    return binary(true, value, size);
+    return state == OPEN;
 }
 
-bool
-WICClient::binary(bool fin, const void *value, uint16_t size)
+nsapi_error_t
+ClientBase::set_root_ca_cert(const void *root_ca, size_t len)
 {
-    bool retval = false;
-    bool done = false;
-
-    mutex.lock();
-
-    events.call(callback(this, &WICClient::do_send_binary), done, retval, fin, value, size);
-
-    while(!done){
-    
-        condition.wait();
-    }
-
-    mutex.unlock();
-
-    return retval;
+    return tls.set_root_ca_cert(root_ca, len);
 }
 
-bool
-WICClient::is_open()
+nsapi_error_t
+ClientBase::set_root_ca_cert(const char *root_ca_pem)
 {
-    return(wic_get_state(&inst) == WIC_STATE_OPEN);
+    return tls.set_root_ca_cert(root_ca_pem);
 }
 
-void
-WICClient::on_text(Callback<void(bool,const char *, uint16_t)> handler)
+nsapi_error_t
+ClientBase::set_client_cert_key(const char *client_cert_pem, const char *client_private_key_pem)
 {
-    on_text_cb = handler;
+    return tls.set_client_cert_key(client_cert_pem, client_private_key_pem);
 }
 
-void
-WICClient::on_binary(Callback<void(bool,const void *, uint16_t)> handler)
+nsapi_error_t
+ClientBase::set_client_cert_key(const void *client_cert_pem, size_t client_cert_len, const void *client_private_key_pem, size_t client_private_key_len)
 {
-    on_binary_cb = handler;
-}
-
-void
-WICClient::on_open(Callback<void()> handler)
-{
-    on_open_cb = handler;
-}
-
-void
-WICClient::on_close(Callback<void(uint16_t, const char *, uint16_t)> handler)
-{
-    on_close_cb = handler;
+    return tls.set_client_cert_key(client_cert_pem, client_cert_len, client_private_key_pem, client_private_key_len);
 }
