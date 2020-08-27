@@ -1,34 +1,30 @@
-#include "wic_client.hpp"
-
-#include <assert.h>
+#include "wic_client.h"
 
 using namespace WIC;
-
-uint32_t time_since();
 
 /* constructors *******************************************************/
 
 ClientBase::ClientBase(NetworkInterface &interface, InputQueueBase& input_queue, OutputQueueBase& tx_queue, BufferBase& url) :
     interface(interface),
     input_queue(input_queue),
-    tx_queue(tx_queue),    
+    tx_queue(tx_queue),
     url(url),
     tls(&tcp),
-    socket(tcp),
+    socket(&tcp),
     writers(0, 1),
     events(100 * EVENTS_EVENT_SIZE),
     readers(readers_mutex)
-{                
-    socket.sigio(callback(this, &ClientBase::do_sigio));
+{
+    socket->sigio(callback(this, &ClientBase::do_sigio));
     worker_thread.start(callback(this, &ClientBase::worker_task));
-    //ticker.attach_us(callback(this, &ClientBase::do_tick), 1000000UL);
+    ticker.attach_us(callback(this, &ClientBase::do_tick), 1000000UL);
 }
 
 /* static protected ***************************************************/
 
 ClientBase *
 ClientBase::to_obj(struct wic_inst *self)
-{       
+{
     return static_cast<ClientBase *>(wic_get_app(self));
 }
 
@@ -52,7 +48,7 @@ ClientBase::handle_send(struct wic_inst *self, const void *data, size_t size, en
 
         obj->tx = nullptr;
         obj->do_work();
-    }                
+    }
 }
 
 void *
@@ -92,17 +88,17 @@ ClientBase::handle_handshake_failure(struct wic_inst *self, enum wic_handshake_f
     case WIC_HANDSHAKE_FAILURE_ABNORMAL_1:
         obj->job.retval = NSAPI_ERROR_CONNECTION_TIMEOUT;
         break;
-        
+
     /* socket closed / transport errored */
     case WIC_HANDSHAKE_FAILURE_ABNORMAL_2:
         obj->job.retval = NSAPI_ERROR_CONNECTION_LOST;
         break;
-        
+
     /* response was not HTTP */
     case WIC_HANDSHAKE_FAILURE_PROTOCOL:
         obj->job.retval = NSAPI_ERROR_UNSUPPORTED;
         break;
-    
+
     /* connection was not upgraded */
     case WIC_HANDSHAKE_FAILURE_UPGRADE:
         obj->job.retval = NSAPI_ERROR_UNSUPPORTED;
@@ -123,7 +119,7 @@ ClientBase::handle_open(struct wic_inst *self)
     obj->events.cancel(obj->timeout_id);
 
     obj->state = OPEN;
-    
+
     obj->job.retval = NSAPI_ERROR_OK;
     obj->job.done = true;
     obj->notify_writers();
@@ -139,7 +135,7 @@ ClientBase::handle_message(struct wic_inst *self, enum wic_encoding encoding, bo
     if(ptr){
 
         ptr->init(data, size, encoding, fin);
-        
+
         obj->input_queue.put(ptr);
 
         retval = true;
@@ -163,7 +159,7 @@ ClientBase::handle_close_transport(struct wic_inst *self)
 {
     /* this ensures that the output queue is flushed */
     to_obj(self)->tx_queue.put(nullptr);
-    to_obj(self)->do_work();     
+    to_obj(self)->do_work();
 }
 
 void
@@ -189,11 +185,11 @@ ClientBase::do_work()
 void
 ClientBase::do_close_socket()
 {
-    socket.close();            
+    socket->close();
     job.done = true;
     state = CLOSED;
-    notify_readers();    
-    notify_writers();    
+    notify_readers();
+    notify_writers();
 }
 
 void
@@ -203,7 +199,7 @@ ClientBase::do_open()
     nsapi_error_t err;
 
     if(!rx){
-        
+
         rx = input_queue.alloc();
     }
 
@@ -227,10 +223,10 @@ ClientBase::do_open()
         return;
     }
 
-    flush_output_queue();
+    flush_input_queue();
 
     init_arg.app = this;
-    
+
     init_arg.rx = rx->data;
     init_arg.rx_max = rx->max;
 
@@ -243,11 +239,11 @@ ClientBase::do_open()
     init_arg.on_send = handle_send;
     init_arg.on_buffer = handle_buffer;
     init_arg.rand = handle_rand;
-    
+
     init_arg.role = WIC_ROLE_CLIENT;
-    
+
     init_arg.url = (const char *)url.data;
-    
+
     if(!wic_init(&inst, &init_arg)){
 
         job.retval = NSAPI_ERROR_PARAMETER;
@@ -258,7 +254,7 @@ ClientBase::do_open()
     err = interface.gethostbyname(wic_get_url_hostname(&inst), &a);
 
     if(err != NSAPI_ERROR_OK){
-        
+
         job.retval = err;
         do_close_socket();
         return;
@@ -270,17 +266,17 @@ ClientBase::do_open()
     default:
     case WIC_SCHEMA_HTTP:
     case WIC_SCHEMA_WS:
-        socket = tcp;                    
-        break;    
-    case WIC_SCHEMA_HTTPS:    
+        socket = &tcp;
+        break;
+    case WIC_SCHEMA_HTTPS:
     case WIC_SCHEMA_WSS:
-        socket = tls;
+        socket = &tls;
         break;
     }
 
     (void)tcp.open(&interface);
 
-    err = socket.connect(a);
+    err = socket->connect(a);
 
     if(err != NSAPI_ERROR_OK){
 
@@ -289,7 +285,7 @@ ClientBase::do_open()
         return;
     }
 
-    socket.set_blocking(false);
+    socket->set_blocking(false);
 
     job.status = wic_start(&inst);
 
@@ -302,7 +298,7 @@ ClientBase::do_open()
 
     state = OPENING;
 
-    timeout_id = events.call_in(5000, callback(this, &ClientBase::do_handshake_timeout));   
+    timeout_id = events.call_in(5000, callback(this, &ClientBase::do_handshake_timeout));
 }
 
 void
@@ -320,7 +316,7 @@ ClientBase::do_close()
         job.done = true;
         notify_writers();
         break;
-    }    
+    }
 }
 
 void
@@ -352,6 +348,11 @@ ClientBase::worker_task()
 
         events.dispatch(0);
 
+        if(state != CLOSED){
+
+            wic_parse(&inst, NULL, 0U);
+        }
+
         /* try to get an RX buffer */
         if(!_rx){
 
@@ -361,14 +362,14 @@ ClientBase::worker_task()
 
                 _rx = new(_rx)RXBuffer;
             }
-            
+
             rx_pos = 0U;
         }
 
         /* try to read the socket if there is a zeroed RX buffer */
         if(_rx && (_rx->size == 0U)){
 
-            retval = socket.recv(_rx->data, _rx->max);
+            retval = socket->recv(_rx->data, _rx->max);
 
             if(retval > 0){
 
@@ -387,7 +388,7 @@ ClientBase::worker_task()
                     rx_pool.free(_rx);
                     _rx = nullptr;
                 }
-            }            
+            }
         }
 
         /* try to parse the data read from socket */
@@ -399,7 +400,7 @@ ClientBase::worker_task()
 
             if(rx_pos == _rx->size){
 
-                rx_pool.free(_rx);                
+                rx_pool.free(_rx);
                 _rx = nullptr;
                 do_work();
             }
@@ -420,15 +421,21 @@ ClientBase::worker_task()
                     tx_queue.free(_tx);
                 }
 
+                _tx = nullptr;
+
                 do_close_socket();
                 do_work();
-            }            
+            }
         }
 
         /* try to write the TX buffer to the socket */
         if(_tx){
 
-            retval = socket.send(&_tx->data[tx_pos], _tx->size - tx_pos);
+            size_t to_write = _tx->size - tx_pos;
+
+            to_write = (to_write > MBED_CONF_WIC_MSS) ? MBED_CONF_WIC_MSS : to_write;
+
+            retval = socket->send(&_tx->data[tx_pos], to_write);
 
             if(retval >= 0){
 
@@ -454,9 +461,9 @@ ClientBase::worker_task()
                     notify_writers();
                     do_work();
                     break;
-                }                    
+                }
             }
-        }    
+        }
     }
 }
 
@@ -487,7 +494,7 @@ ClientBase::connect(const char *url)
 
         this->url.size = strlen(url_ptr)+1U;
         strcpy((char *)this->url.data, url_ptr);
-        
+
         events.call(callback(this, &ClientBase::do_open));
         do_work();
 
@@ -515,7 +522,7 @@ ClientBase::connect(const char *url)
     }
 
     writers_mutex.unlock();
-    
+
     return retval;
 }
 
@@ -541,6 +548,11 @@ nsapi_size_or_error_t
 ClientBase::send(const char *data, uint16_t size, enum wic_encoding encoding, bool fin)
 {
     nsapi_size_or_error_t retval = NSAPI_ERROR_PARAMETER;
+
+    if(size > 1000){
+
+        
+    }
 
     writers_mutex.lock();
 
@@ -569,7 +581,7 @@ ClientBase::send(const char *data, uint16_t size, enum wic_encoding encoding, bo
                 break;
             default:
                 retval = NSAPI_ERROR_PARAMETER;
-                break;            
+                break;
             }
 
             break;
@@ -586,7 +598,7 @@ ClientBase::try_get(nsapi_size_or_error_t &retval, enum wic_encoding& encoding, 
 {
     bool success = false;
     osEvent evt;
-    BufferBase *ptr;    
+    BufferBase *ptr;
 
     evt = input_queue.get(0);
 
@@ -598,11 +610,11 @@ ClientBase::try_get(nsapi_size_or_error_t &retval, enum wic_encoding& encoding, 
         fin = ptr->fin;
         retval = (ptr->size > max) ? max : ptr->size;
         (void)memcpy(buffer, ptr->data, retval);
-        
+
         input_queue.free(ptr);
         do_work();
 
-        success = true;                
+        success = true;
     }
     else{
 
@@ -616,7 +628,7 @@ ClientBase::try_get(nsapi_size_or_error_t &retval, enum wic_encoding& encoding, 
 nsapi_size_or_error_t
 ClientBase::recv(enum wic_encoding& encoding, bool &fin, char *buffer, size_t max, uint32_t timeout)
 {
-    nsapi_size_or_error_t retval;    
+    nsapi_size_or_error_t retval;
     uint64_t until = 0;
 
     readers_mutex.lock();
@@ -639,7 +651,7 @@ ClientBase::recv(enum wic_encoding& encoding, bool &fin, char *buffer, size_t ma
                 retval = NSAPI_ERROR_NO_CONNECTION;
                 break;
             }
-        
+
             if(timeout == osWaitForever){
 
                 readers.wait();
@@ -647,7 +659,7 @@ ClientBase::recv(enum wic_encoding& encoding, bool &fin, char *buffer, size_t ma
             else if(readers.wait_until(until)){
 
                 retval = (state == OPEN) ? NSAPI_ERROR_WOULD_BLOCK : NSAPI_ERROR_NO_CONNECTION;
-                break;                
+                break;
             }
             else{
 
@@ -657,7 +669,7 @@ ClientBase::recv(enum wic_encoding& encoding, bool &fin, char *buffer, size_t ma
     }
 
     readers_mutex.unlock();
-    
+
     return retval;
 }
 

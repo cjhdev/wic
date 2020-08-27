@@ -19,8 +19,8 @@
  *
  * */
 
-#include "wic_client.hpp"
-#include "wic_nsapi.hpp"
+#include "wic_client.h"
+#include "wic_nsapi.h"
 #include "EthernetInterface.h"
 #include <cinttypes>
 
@@ -56,7 +56,7 @@ int main()
     int n;
 
     static EthernetInterface eth;
-    static WIC::Client<sizeof(buffer),1012> client(eth);
+    static WIC::Client<sizeof(buffer)> client(eth);
 
     eth.connect();
 
@@ -64,12 +64,8 @@ int main()
 
     if(retval == NSAPI_ERROR_OK){
 
-        time_since();
-
         retval = client.recv(encoding, fin, buffer, sizeof(buffer));
 
-        PUTS("recv() in %" PRIu32 "us", time_since());
-        
         if(retval < 0){
 
             PUTS("failed to read number of test cases (%s)", WIC::nsapi_error_to_s(retval));        
@@ -91,41 +87,27 @@ int main()
 
                 PUTS("BEGIN TC%d", tc);
 
-                time_since();
-
                 retval = client.connect(url);
-
-                PUTS("tc%d: open() in %" PRIu32 "us", tc, time_since());
 
                 if(retval == NSAPI_ERROR_OK){
 
                     for(;;){
 
-                        time_since();
-
                         retval = client.recv(encoding, fin, buffer, sizeof(buffer));
-
-                        PUTS("tc%d: recv() in %" PRIu32 "us", tc, time_since());
 
                         if(retval >= 0){
 
                             bytes = retval;
 
-                            PUTS("tc%d: preparing to echo %d bytes of %s", tc, bytes, (encoding == WIC_ENCODING_UTF8) ? "text" : "binary");                        
-
-#if 1
                             time_since();
 
                             retval = client.send(buffer, bytes, encoding, fin);
-
-                            PUTS("tc%d: send() in %" PRIu32 "us", tc, time_since());
 
                             if(retval != bytes){
 
                                 PUTS("tc%d: breaking loop after send() returned %s", tc, WIC::nsapi_error_to_s(retval));
                                 break;
                             }
-#endif                            
                         }
                         else{
 
@@ -137,12 +119,10 @@ int main()
                     time_since();
                     
                     client.close();
-
-                    PUTS("tc%d: close() in %" PRIu32 "us", tc, time_since());
                 }
                 else{
 
-                    PUTS("tc%d: open() failed with retval %s", tc, WIC::nsapi_error_to_s(retval));
+                    PUTS("tc%d: connect() failed with retval %s", tc, WIC::nsapi_error_to_s(retval));
                 }
 
                 PUTS("END TC%d", tc);
@@ -156,7 +136,7 @@ int main()
     }
     else{
 
-        PUTS("failed to connect");
+        PUTS("connect() failed with retval %s", WIC::nsapi_error_to_s(retval));
     }
 
     PUTS("all done");

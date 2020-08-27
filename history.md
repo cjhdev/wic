@@ -1,6 +1,11 @@
 History
 =======
 
+## 0.2.1
+
+- default port is now set when no port is included in the URL
+- the MBED wrapper is now passing all non-perf tests
+
 ## 0.2.0
 
 Many enhancements to the original concept, the most significant being improved

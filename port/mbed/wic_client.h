@@ -19,19 +19,19 @@
  *
  * */
 
-#ifndef WIC_CLIENT_HPP
-#define WIC_CLIENT_HPP
+#ifndef WIC_CLIENT_H
+#define WIC_CLIENT_H
 
 #include "mbed.h"
 #include "wic.h"
 #include "TLSSocket.h"
-#include "wic_output_queue.hpp"
-#include "wic_buffer.hpp"
-#include "wic_input_queue.hpp"
+#include "wic_output_queue.h"
+#include "wic_buffer.h"
+#include "wic_input_queue.h"
 
 namespace WIC {
 
-    class RXBuffer : public Buffer<500U>
+    class RXBuffer : public Buffer<MBED_CONF_WIC_MSS>
     {
     };
 
@@ -65,7 +65,7 @@ namespace WIC {
 
             TCPSocket tcp;
             TLSSocketWrapper tls;
-            Socket &socket;
+            Socket *socket;
             
             Mutex writers_mutex;
             Semaphore writers;
@@ -143,13 +143,11 @@ namespace WIC {
                 readers_mutex.unlock();
             }
 
-            void flush_output_queue()
+            void flush_input_queue()
             {
-                osEvent evt;
-                
                 readers_mutex.lock();
                 
-                for(evt = input_queue.get(0); evt.status == osEventMail; evt = input_queue.get(0)){
+                for(osEvent evt = input_queue.get(0); evt.status == osEventMail; evt = input_queue.get(0)){
 
                     input_queue.free(static_cast<BufferBase *>(evt.value.p));
                 }
@@ -259,13 +257,13 @@ namespace WIC {
             nsapi_error_t set_client_cert_key(const void *client_cert_pem, size_t client_cert_len, const void *client_private_key_pem, size_t client_private_key_len);            
     };
 
-    template<size_t RX_MAX, size_t TX_MAX, size_t URL_MAX = 200>
+    template<size_t RX_MAX, size_t TX_MAX = RX_MAX, size_t URL_MAX = 200>
     class Client : public ClientBase {
 
         protected:
 
             InputQueue<RX_MAX, 2U> _input_queue;
-            OutputQueue<TX_MAX> _tx_queue;
+            OutputQueue< TX_MAX + 14U > _tx_queue;
             Buffer<URL_MAX> _url;
             
         public:

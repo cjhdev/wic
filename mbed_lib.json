@@ -1,0 +1,10 @@
+{
+    "name" : "wic",
+    "config" : {
+        "mss" : {
+
+            "help" : "WIC will never write more than this many bytes to socket send()",
+            "value" : 536
+        }
+    }
+}

@@ -1,5 +1,4 @@
-examples/autobahn/*
-examples/demo_client/*
-examples/transport/*
+doxygen/*
+examples/*
 
 
