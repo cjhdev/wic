@@ -4,7 +4,7 @@
 DIR_PROJECT_ROOT := $(shell cd ../..;pwd)
 
 # change this to point to your container
-DOCKER := docker run --mount type=bind,source=$(DIR_PROJECT_ROOT),destination=/mbed/wic --device=/dev/ttyACM0:/dev/ttyACM0 -ti --rm --user 1000:1000 -v $(shell pwd):/mbed:cached my-mbed-cli
+DOCKER := docker run --mount type=bind,source=$(DIR_PROJECT_ROOT),destination=/mbed/wic -ti --rm --user 1000:1000 -v $(shell pwd):/mbed:cached my-mbed-cli
 
 # special MBED name for target
 DEVICE ?= NUCLEO_F429ZI
@@ -49,14 +49,14 @@ flash: upload_flash.jlink $(DIR_BUILD)/mbed.hex
 
 gdb: $(DIR_BUILD)/mbed.elf .gdbinit flash
 	$(GDB) --command=.gdbinit -tui -q $<
-	
+
 gdb_server:
-	$(GDB_SERVER) -if swd -device $(JLINK_DEVICE) -vd -speed $(JLINK_SPEED) -endian little 
+	$(GDB_SERVER) -if swd -device $(JLINK_DEVICE) -vd -speed $(JLINK_SPEED) -endian little
 
 size: $(DIR_BUILD)/mbed.elf
 	$(SIZE) $<
 
-upload_flash.jlink: 
+upload_flash.jlink:
 	@ rm -f $@
 	@ touch $@
 	@ echo r                          >> $@
@@ -73,14 +73,14 @@ upload_flash.jlink:
 	@ echo dir $(DIR_PROJECT_ROOT)/src  >> $@
 	@ echo dir $(DIR_PROJECT_ROOT)/include  >> $@
 	@ echo dir $(DIR_PROJECT_ROOT)/port/mbed  >> $@
-	#@ echo monitor flash download = 1    >> $@ 
+	#@ echo monitor flash download = 1    >> $@
 	#@ echo load                 >> $@
 	@ echo monitor reset                 >> $@
 	@ echo focus cmd                     >> $@
 
 clean:
-	rm .gdbinit upload_flash.jlink
-	rm -rf $(DIR_BUILD)	
+	rm -f .gdbinit upload_flash.jlink
+	rm -rf $(DIR_BUILD)
 
 .PHONY: clean gdb_server $(DIR_BUILD)/mbed.elf upload_flash.jlink .gdbinit config
 
