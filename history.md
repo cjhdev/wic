@@ -1,6 +1,13 @@
 History
 =======
 
+## 0.2.2
+
+- moved all mbed examples into examples/mbed
+- added makefile for compiling all MBED examples
+- added docker file for setting up MBED build environment
+- removed the rogue .mbedignore stopping MBED tcp client example from compiling
+
 ## 0.2.1
 
 - default port is now set when no port is included in the URL

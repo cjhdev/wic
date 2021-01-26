@@ -1,8 +1,5 @@
-wic
 BUILD
 mbed-os
-.mbed
+wic
 upload_flash.jlink
 .gdbinit
-
-
