@@ -151,7 +151,7 @@ WIC integrates code from the following projects:
 
 - Joyent/Node-JS http-parser
 - Bjoern Hoehrmann's UTF8 parser
-- MBED TLS SHA1
+- MBED TLS SHA1 (modified to suit this project)
 
 The Autobahn Test Suite has been used for verification.
 

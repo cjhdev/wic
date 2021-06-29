@@ -2134,6 +2134,8 @@ static bool utf8_is_invalid(uint16_t state)
 #define SHA1
 #ifdef SHA1
 /*
+ * (Note that this source has been modified from the original to better fit the project)
+ *
  *  FIPS-180-1 compliant SHA-1 implementation
  *
  *  Copyright (C) 2006-2015, ARM Limited, All Rights Reserved
