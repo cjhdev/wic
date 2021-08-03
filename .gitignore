@@ -8,3 +8,4 @@ mbed-os.lib
 *.jlink
 *.py
 *.pyc
+/build_x64_vs2019_release
