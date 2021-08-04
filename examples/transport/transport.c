@@ -98,7 +98,11 @@ bool transport_open_client(enum wic_schema schema, const char *host, uint16_t po
     }
     else{
 
+#ifdef __APPLE__
+        *s = socket(res->ai_family, /*res->ai_socktype*/SOCK_STREAM, /*res->ai_protocol*/IPPROTO_TCP); // was datagram/udp on macos
+#else
         *s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+#endif
 
         if(*s < 0){
 
@@ -135,7 +139,7 @@ void transport_write(int s, const void *data, size_t size)
     const uint8_t *ptr = data;
     size_t pos;
     int retval;
-
+    
     for(pos=0U; pos < size; pos += retval){
 
 #ifdef WIN32
