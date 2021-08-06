@@ -1,4 +1,4 @@
 mkdir build
 cd build
 cmake -G "Xcode" ..
-cmake --build .
+cmake --build . --config Release
