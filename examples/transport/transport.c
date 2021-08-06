@@ -136,7 +136,7 @@ bool transport_open_client(enum wic_schema schema, const char *host, uint16_t po
 
 void transport_write(int s, const void *data, size_t size)
 {
-    const uint8_t *ptr = data;
+    const uint8_t *ptr = (const uint8_t *)data;
     size_t pos;
     int retval;
     

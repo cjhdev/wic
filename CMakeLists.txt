@@ -24,13 +24,13 @@ set(SOURCE
   examples/demo_client/demo_client.c
   examples/demo_client/port.h
   examples/demo_client/log.h
-  examples/transport/transport.h
-  examples/transport/transport.c
 )
 
 set(SOURCE_LIB
   src/http_parser.c
   src/wic.c
+  examples/transport/transport.h
+  examples/transport/transport.c
 )
 
 if(WIN32)
@@ -59,7 +59,7 @@ endif()
 
 add_library(${CMAKE_PROJECT_NAME} STATIC ${SOURCE_PROTO} ${SOURCE_LIB})
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ${SYSTEM_LIB})
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE include examples/transport)
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE include examples/transport examples/demo_client)
 
 add_executable(${CMAKE_PROJECT_NAME}_bin ${SOURCE})
 add_dependencies(${CMAKE_PROJECT_NAME}_bin ${CMAKE_PROJECT_NAME})
