@@ -48,10 +48,10 @@ to copy the fields when they are available.
 - create empty file in search path and name it `wic_config.h`
 - compile sources in `src`
 
-`wic_config.h` can be empty or it can contain definitions for:
+`wic_config.h` can be empty, or it can contain definitions for:
 
 - WIC_DEBUG(XX): debug level log message
-- WIC_ERROR(XX): debug level log message
+- WIC_ERROR(XX): error level log message
 - WIC_ASSERT(XX): assertions
 - WIC_HOSTNAME_MAXLEN: redefine the maximum size of hostname buffer
 
