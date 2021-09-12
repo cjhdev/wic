@@ -163,7 +163,7 @@ static void on_send_handler(struct wic_inst *inst, const void *data, size_t size
 
 static void *on_buffer_handler(struct wic_inst *inst, size_t min_size, enum wic_buffer type, size_t *max_size)
 {
-    static uint8_t tx[1000U];
+    static uint8_t tx[1000];
 
     *max_size = sizeof(tx);
 

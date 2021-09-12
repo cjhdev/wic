@@ -20,8 +20,15 @@
  * */
 
 #include "wic.h"
+#include "wic_server_hash.h"
 #include <string.h>
 #include <ctype.h>
+
+#define U8(XX) ((uint8_t)(XX))
+#define U16(XX) ((uint16_t)(XX))
+#define U32(XX) ((uint32_t)(XX))
+#define U64(XX) ((uint64_t)(XX))
+#define ST(XX) ((size_t)(XX))
 
 struct wic_tx_frame {
 
@@ -36,19 +43,11 @@ struct wic_tx_frame {
     uint16_t code;
 
     bool masked;
-    uint8_t mask[4U];
+    uint8_t mask[4];
 
     uint16_t size;
     const void *payload;
 };
-
-typedef struct sha1_context
-{
-    uint32_t total[2];          /* The number of Bytes processed.  */
-    uint32_t state[5];          /* The intermediate digest state.  */
-    unsigned char buffer[64];   /* The data block being processed. */
-
-} sha1_context;
 
 static const enum wic_opcode opcodes[] = {
     WIC_OPCODE_CONTINUE,
@@ -121,13 +120,6 @@ static uint16_t utf8_parse_string(uint16_t state, const char *in, uint16_t len);
 static bool utf8_is_complete(uint16_t state);
 static bool utf8_is_invalid(uint16_t state);
 
-static void server_hash(const char *nonce, size_t len, uint8_t *hash);
-static void sha1_init( sha1_context *ctx );
-static int sha1_starts_ret( sha1_context *ctx );
-static int internal_sha1_process( sha1_context *ctx, const unsigned char data[64] );
-static int sha1_update_ret( sha1_context *ctx, const unsigned char *input, size_t ilen );
-static int sha1_finish_ret( sha1_context *ctx, unsigned char output[20] );
-
 static int on_header_field(http_parser *http, const char *at, size_t length);
 static int on_header_value(http_parser *http, const char *at, size_t length);
 static int on_response_complete(http_parser *http);
@@ -139,7 +131,7 @@ bool wic_init(struct wic_inst *self, const struct wic_init_arg *arg)
 {
     struct http_parser_url u;
     size_t i;
-    uint16_t port = 0U;
+    uint16_t port = 0;
 
     static const char *supported_schema[] = {
         "http",
@@ -208,10 +200,10 @@ bool wic_init(struct wic_inst *self, const struct wic_init_arg *arg)
                 switch(schema){
                 case WIC_SCHEMA_HTTP:
                 case WIC_SCHEMA_WS:
-                    port = 80U;
+                    port = 80;
                     break;
                 default:
-                    port = 443U;
+                    port = 443;
                     break;
                 }
             }
@@ -319,7 +311,7 @@ enum wic_status wic_start(struct wic_inst *self)
 
 void wic_close(struct wic_inst *self)
 {
-    wic_close_with_reason(self, WIC_CLOSE_NORMAL, NULL, 0U);
+    wic_close_with_reason(self, wic_convert_close_reason(WIC_CLOSE_REASON_NORMAL), NULL, 0);
 }
 
 void wic_close_with_reason(struct wic_inst *self, uint16_t code, const char *reason, uint16_t size)
@@ -460,7 +452,7 @@ enum wic_status wic_send(struct wic_inst *self, enum wic_encoding encoding, bool
 
 enum wic_status wic_send_ping(struct wic_inst *self)
 {
-    return wic_send_ping_with_payload(self, NULL, 0U);
+    return wic_send_ping_with_payload(self, NULL, 0);
 }
 
 enum wic_status wic_send_ping_with_payload(struct wic_inst *self, const void *data, uint16_t size)
@@ -713,21 +705,21 @@ static size_t min_frame_size(enum wic_opcode opcode, bool masked, uint16_t paylo
     if(opcode == WIC_OPCODE_CLOSE){
 
         /* close includes 2 byte code */
-        retval += 2U;
+        retval += 2;
     }
 
     if(retval > 125U){
 
         /* size encoding up to 65535 bytes */
-        retval += 2UL;
+        retval += 2;
     }
 
     /* header */
-    retval += 2UL;
+    retval += 2;
 
     if(masked){
 
-        retval += 4UL;
+        retval += 4;
     }
 
     return retval;
@@ -801,16 +793,23 @@ static void close_with_reason(struct wic_inst *self, uint16_t code, const char *
         if(self->on_handshake_failure != NULL){
 
             switch(code){
-            case WIC_CLOSE_ABNORMAL_1:
+            case U16(WIC_CLOSE_REASON_ABNORMAL_1):
+
                 self->on_handshake_failure(self, WIC_HANDSHAKE_FAILURE_ABNORMAL_1);
                 break;
-            case WIC_CLOSE_ABNORMAL_2:
+
+            case U16(WIC_CLOSE_REASON_ABNORMAL_2):
+
                 self->on_handshake_failure(self, WIC_HANDSHAKE_FAILURE_ABNORMAL_2);
                 break;
-            case WIC_CLOSE_TLS:
+
+            case U16(WIC_CLOSE_REASON_TLS):
+
                 self->on_handshake_failure(self, WIC_HANDSHAKE_FAILURE_TLS);
                 break;
+
             default:
+
                 self->on_handshake_failure(self, WIC_HANDSHAKE_FAILURE_IRRELEVANT);
                 break;
             }
@@ -822,18 +821,17 @@ static void close_with_reason(struct wic_inst *self, uint16_t code, const char *
 
         self->state = WIC_STATE_CLOSED;
 
-        if(!utf8_is_complete(utf8_parse_string(0U, reason, size))){
+        if(!utf8_is_complete(utf8_parse_string(0, reason, size))){
 
             WIC_ERROR("reason string must be UTF8 (discarding)")
-            f.size = 0U;
+            f.size = 0;
             f.payload = NULL;
         }
 
         switch(code){
-        /* these are not written */
-        case WIC_CLOSE_ABNORMAL_1:
-        case WIC_CLOSE_ABNORMAL_2:
-        case WIC_CLOSE_TLS:
+        case U16(WIC_CLOSE_REASON_ABNORMAL_1):
+        case U16(WIC_CLOSE_REASON_ABNORMAL_2):
+        case U16(WIC_CLOSE_REASON_TLS):
             break;
         default:
 
@@ -875,17 +873,17 @@ static bool parse_opcode(struct wic_inst *self, struct wic_stream *s)
 
         stream_rewind(&self->rx.s);
 
-        self->rx.fin = ((b & 0x80U) != 0U);
-        self->rx.rsv1 = ((b & 0x40U) != 0U);
-        self->rx.rsv2 = ((b & 0x20U) != 0U);
-        self->rx.rsv3 = ((b & 0x10U) != 0U);
+        self->rx.fin =  ((b & U8(0x80)) > 0U);
+        self->rx.rsv1 = ((b & U8(0x40)) > 0U);
+        self->rx.rsv2 = ((b & U8(0x20)) > 0U);
+        self->rx.rsv3 = ((b & U8(0x10)) > 0U);
 
-        self->rx.utf8 = 0U;
+        self->rx.utf8 = 0;
 
         /* no extensions atm so these must be 0 */
         if(self->rx.rsv1 || self->rx.rsv2 || self->rx.rsv3){
 
-            close_with_reason(self, WIC_CLOSE_PROTOCOL_ERROR, NULL, 0U, WIC_BUFFER_CLOSE);
+            close_with_reason(self, wic_convert_close_reason(WIC_CLOSE_REASON_PROTOCOL_ERROR), NULL, 0U, WIC_BUFFER_CLOSE);
         }
         else{
 
@@ -900,7 +898,7 @@ static bool parse_opcode(struct wic_inst *self, struct wic_stream *s)
                 /* close, ping, and pong must be final */
                 if(!self->rx.fin){
 
-                    close_with_reason(self, WIC_CLOSE_PROTOCOL_ERROR, NULL, 0U, WIC_BUFFER_CLOSE);
+                    close_with_reason(self, wic_convert_close_reason(WIC_CLOSE_REASON_PROTOCOL_ERROR), NULL, 0U, WIC_BUFFER_CLOSE);
                 }
                 break;
 
@@ -909,7 +907,7 @@ static bool parse_opcode(struct wic_inst *self, struct wic_stream *s)
                 /* continue must follow a non-final text/binary */
                 if(self->rx.frag == WIC_OPCODE_CONTINUE){
 
-                    close_with_reason(self, WIC_CLOSE_PROTOCOL_ERROR, NULL, 0U, WIC_BUFFER_CLOSE);
+                    close_with_reason(self, wic_convert_close_reason(WIC_CLOSE_REASON_PROTOCOL_ERROR), NULL, 0U, WIC_BUFFER_CLOSE);
                 }
                 else{
 
@@ -923,12 +921,12 @@ static bool parse_opcode(struct wic_inst *self, struct wic_stream *s)
                 /* interrupting fragmentation */
                 if(self->rx.frag != WIC_OPCODE_CONTINUE){
 
-                    close_with_reason(self, WIC_CLOSE_PROTOCOL_ERROR, NULL, 0U, WIC_BUFFER_CLOSE);
+                    close_with_reason(self, wic_convert_close_reason(WIC_CLOSE_REASON_PROTOCOL_ERROR), NULL, 0U, WIC_BUFFER_CLOSE);
                 }
                 break;
 
             default:
-                close_with_reason(self, WIC_CLOSE_PROTOCOL_ERROR, NULL, 0U, WIC_BUFFER_CLOSE);
+                close_with_reason(self, wic_convert_close_reason(WIC_CLOSE_REASON_PROTOCOL_ERROR), NULL, 0U, WIC_BUFFER_CLOSE);
                 break;
             }
 
@@ -950,25 +948,25 @@ static bool parse_size(struct wic_inst *self, struct wic_stream *s)
 
     if(stream_get_u8(s, &b)){
 
-        self->rx.masked = ((b & 0x80U) != 0U);
-        self->rx.size = b & 0x7fU;
+        self->rx.masked = ((b & U8(0x80)) > 0U);
+        self->rx.size = b & U8(0x7f);
 
         switch(self->rx.opcode){
         case WIC_OPCODE_CLOSE:
 
             if((self->rx.size > 125U) || (self->rx.size == 1U)){
 
-                close_with_reason(self, WIC_CLOSE_PROTOCOL_ERROR, NULL, 0U, WIC_BUFFER_CLOSE);
+                close_with_reason(self, wic_convert_close_reason(WIC_CLOSE_REASON_PROTOCOL_ERROR), NULL, 0, WIC_BUFFER_CLOSE);
             }
             else{
 
                 if(self->rx.size == 0U){
 
-                    close_with_reason(self, WIC_CLOSE_NORMAL, NULL, 0U, WIC_BUFFER_CLOSE);
+                    close_with_reason(self, wic_convert_close_reason(WIC_CLOSE_REASON_NORMAL), NULL, 0, WIC_BUFFER_CLOSE);
                 }
                 else if(self->rx.size > stream_max(&self->rx.s)){
 
-                    close_with_reason(self, WIC_CLOSE_TOO_BIG, NULL, 0U, WIC_BUFFER_CLOSE);
+                    close_with_reason(self, wic_convert_close_reason(WIC_CLOSE_REASON_TOO_BIG), NULL, 0, WIC_BUFFER_CLOSE);
                 }
                 else{
 
@@ -982,11 +980,11 @@ static bool parse_size(struct wic_inst *self, struct wic_stream *s)
 
             if(self->rx.size > 125U){
 
-                close_with_reason(self, WIC_CLOSE_PROTOCOL_ERROR, NULL, 0U, WIC_BUFFER_CLOSE);
+                close_with_reason(self, wic_convert_close_reason(WIC_CLOSE_REASON_PROTOCOL_ERROR), NULL, 0U, WIC_BUFFER_CLOSE);
             }
             else if(self->rx.size > stream_max(&self->rx.s)){
 
-                close_with_reason(self, WIC_CLOSE_TOO_BIG, NULL, 0U, WIC_BUFFER_CLOSE);
+                close_with_reason(self, wic_convert_close_reason(WIC_CLOSE_REASON_TOO_BIG), NULL, 0U, WIC_BUFFER_CLOSE);
             }
             else{
 
@@ -999,13 +997,13 @@ static bool parse_size(struct wic_inst *self, struct wic_stream *s)
         }
 
         switch(self->rx.size){
-        case 127U:
+        case U64(127):
             self->rx.state = WIC_RX_STATE_SIZE_2;
-            self->rx.size = 0U;
+            self->rx.size = 0;
             break;
-        case 126U:
+        case U64(126):
             self->rx.state = WIC_RX_STATE_SIZE_0;
-            self->rx.size = 0U;
+            self->rx.size = 0;
             break;
         default:
             self->rx.state = self->rx.masked ? WIC_RX_STATE_MASK_0 : WIC_RX_STATE_DATA;
@@ -1153,7 +1151,7 @@ static bool parse_data(struct wic_inst *self, struct wic_stream *s)
 
                     if(utf8_is_invalid(self->rx.utf8)){
 
-                        close_with_reason(self, WIC_CLOSE_INVALID_DATA, NULL, 0U, WIC_BUFFER_CLOSE);
+                        close_with_reason(self, wic_convert_close_reason(WIC_CLOSE_REASON_INVALID_DATA), NULL, 0, WIC_BUFFER_CLOSE);
                     }
                     break;
 
@@ -1165,7 +1163,7 @@ static bool parse_data(struct wic_inst *self, struct wic_stream *s)
 
                         if(utf8_is_invalid(self->rx.utf8)){
 
-                            close_with_reason(self, WIC_CLOSE_INVALID_DATA, NULL, 0U, WIC_BUFFER_CLOSE_RESPONSE);
+                            close_with_reason(self, wic_convert_close_reason(WIC_CLOSE_REASON_INVALID_DATA), NULL, 0, WIC_BUFFER_CLOSE_RESPONSE);
                         }
                     }
                     break;
@@ -1214,7 +1212,7 @@ static bool parse_data(struct wic_inst *self, struct wic_stream *s)
             }
             else{
 
-                close_with_reason(self, WIC_CLOSE_INVALID_DATA, NULL, 0U, WIC_BUFFER_CLOSE);
+                close_with_reason(self, wic_convert_close_reason(WIC_CLOSE_REASON_INVALID_DATA), NULL, 0U, WIC_BUFFER_CLOSE);
             }
             break;
 
@@ -1232,20 +1230,20 @@ static bool parse_data(struct wic_inst *self, struct wic_stream *s)
 
         case WIC_OPCODE_CLOSE:
 
-            code = (uint8_t)self->rx.s.read[0];
+            code = U8(self->rx.s.read[0]);
             code <<= 8;
-            code |= (uint8_t)self->rx.s.read[1];
+            code |= U8(self->rx.s.read[1]);
 
             switch(code){
-            case WIC_CLOSE_NORMAL:
-            case WIC_CLOSE_GOING_AWAY:
-            case WIC_CLOSE_PROTOCOL_ERROR:
-            case WIC_CLOSE_UNSUPPORTED:
-            case WIC_CLOSE_INVALID_DATA:
-            case WIC_CLOSE_POLICY:
-            case WIC_CLOSE_TOO_BIG:
-            case WIC_CLOSE_EXTENSION_REQUIRED:
-            case WIC_CLOSE_UNEXPECTED_EXCEPTION:
+            case U16(WIC_CLOSE_REASON_NORMAL):
+            case U16(WIC_CLOSE_REASON_GOING_AWAY):
+            case U16(WIC_CLOSE_REASON_PROTOCOL_ERROR):
+            case U16(WIC_CLOSE_REASON_UNSUPPORTED):
+            case U16(WIC_CLOSE_REASON_INVALID_DATA):
+            case U16(WIC_CLOSE_REASON_POLICY):
+            case U16(WIC_CLOSE_REASON_TOO_BIG):
+            case U16(WIC_CLOSE_REASON_EXTENSION_REQUIRED):
+            case U16(WIC_CLOSE_REASON_UNEXPECTED_EXCEPTION):
 
                 if(utf8_is_complete(self->rx.utf8)){
 
@@ -1253,23 +1251,23 @@ static bool parse_data(struct wic_inst *self, struct wic_stream *s)
                 }
                 else{
 
-                    close_with_reason(self, WIC_CLOSE_PROTOCOL_ERROR, NULL, 0U, WIC_BUFFER_CLOSE_RESPONSE);
+                    close_with_reason(self, wic_convert_close_reason(WIC_CLOSE_REASON_PROTOCOL_ERROR), NULL, 0, WIC_BUFFER_CLOSE_RESPONSE);
                 }
                 break;
 
             default:
 
-                if((code >= 3000U) && (code <= 3999)){
+                if((code >= U16(3000)) && (code <= U16(3999))){
 
-                    close_with_reason(self, WIC_CLOSE_NORMAL, NULL, 0U, WIC_BUFFER_CLOSE_RESPONSE);
+                    close_with_reason(self, wic_convert_close_reason(WIC_CLOSE_REASON_NORMAL), NULL, 0, WIC_BUFFER_CLOSE_RESPONSE);
                 }
-                else if((code >= 4000U) && (code <= 4999)){
+                else if((code >= U16(4000)) && (code <= U16(4999))){
 
-                    close_with_reason(self, WIC_CLOSE_NORMAL, NULL, 0U, WIC_BUFFER_CLOSE_RESPONSE);
+                    close_with_reason(self, wic_convert_close_reason(WIC_CLOSE_REASON_NORMAL), NULL, 0, WIC_BUFFER_CLOSE_RESPONSE);
                 }
                 else{
 
-                    close_with_reason(self, WIC_CLOSE_PROTOCOL_ERROR, NULL, 0U, WIC_BUFFER_CLOSE_RESPONSE);
+                    close_with_reason(self, wic_convert_close_reason(WIC_CLOSE_REASON_PROTOCOL_ERROR), NULL, 0, WIC_BUFFER_CLOSE_RESPONSE);
                 }
                 break;
             }
@@ -1319,11 +1317,11 @@ static enum wic_status start_server(struct wic_inst *self)
     size_t max;
     struct wic_stream tx;
     enum wic_status retval;
-    char b64_hash[28U];
+    char b64_hash[28];
 
     if(self->state == WIC_STATE_READY){
 
-        buf = self->on_buffer(self, 0U, WIC_BUFFER_HTTP, &max);
+        buf = self->on_buffer(self, 0, WIC_BUFFER_HTTP, &max);
 
         if(buf != NULL){
 
@@ -1359,7 +1357,7 @@ static enum wic_status start_server(struct wic_inst *self)
             else{
 
                 /* send with length zero to free */
-                self->on_send(self, tx.read, 0U, WIC_BUFFER_HTTP);
+                self->on_send(self, tx.read, 0, WIC_BUFFER_HTTP);
                 WIC_DEBUG("handshake too large for buffer")
                 retval = WIC_STATUS_TOO_LARGE;
             }
@@ -1386,8 +1384,8 @@ static enum wic_status start_client(struct wic_inst *self)
     struct wic_stream tx;
     struct http_parser_url u;
     enum wic_status retval;
-    uint32_t nonce[4U];
-    char nonce_b64[24U];
+    uint32_t nonce[4];
+    char nonce_b64[24];
 
     WIC_ASSERT(sizeof(nonce_b64) == b64_encoded_size(sizeof(nonce)))
 
@@ -1397,7 +1395,7 @@ static enum wic_status start_client(struct wic_inst *self)
 
         if(http_parser_parse_url(self->url, strlen(self->url), 0, &u) == 0){
 
-            buf = self->on_buffer(self, 0U, WIC_BUFFER_HTTP, &max);
+            buf = self->on_buffer(self, 0, WIC_BUFFER_HTTP, &max);
 
             if(buf != NULL){
 
@@ -1442,7 +1440,7 @@ static enum wic_status start_client(struct wic_inst *self)
 
                 (void)b64_encode(nonce, sizeof(nonce), nonce_b64, sizeof(nonce_b64));
 
-                server_hash(nonce_b64, sizeof(nonce_b64), self->hash);
+                wic_server_hash(nonce_b64, sizeof(nonce_b64), self->hash);
 
                 stream_put_str(&tx, "Sec-WebSocket-Key: ");
                 stream_write(&tx, nonce_b64, sizeof(nonce_b64));
@@ -1468,7 +1466,7 @@ static enum wic_status start_client(struct wic_inst *self)
                 else{
 
                     /* send with length zero to free */
-                    self->on_send(self, tx.read, 0U, WIC_BUFFER_HTTP);
+                    self->on_send(self, tx.read, 0, WIC_BUFFER_HTTP);
 
                     WIC_ERROR("handshake too large for buffer")
                     retval = WIC_STATUS_TOO_LARGE;
@@ -1497,7 +1495,7 @@ static enum wic_status start_client(struct wic_inst *self)
 
 static struct wic_tx_frame *init_mask(struct wic_inst *self, struct wic_tx_frame *f)
 {
-    uint32_t mask = (self->rand != NULL) ? self->rand(self) : 0xaaaaaaaaUL;
+    uint32_t mask = (self->rand != NULL) ? self->rand(self) : U32(0xaaaaaaaa);
 
     /* so, I feel the mask should be left out if there is no data but
      * this causes autobahn suite to fail */
@@ -1515,7 +1513,7 @@ static uint8_t opcode_to_byte(enum wic_opcode opcode)
 
 static enum wic_opcode byte_to_opcode(uint8_t b)
 {
-    return opcodes[b & 0xfU];
+    return opcodes[b & U8(0xf)];
 }
 
 static void stream_init(struct wic_stream *self, void *buf, uint32_t size)
@@ -1523,7 +1521,7 @@ static void stream_init(struct wic_stream *self, void *buf, uint32_t size)
     self->write = buf;
     self->read = buf;
     self->size = size;
-    self->pos = 0U;
+    self->pos = 0;
     self->error = false;
 }
 
@@ -1532,13 +1530,13 @@ static void stream_init_ro(struct wic_stream *self, const void *buf, uint32_t si
     self->write = NULL;
     self->read = buf;
     self->size = size;
-    self->pos = 0U;
+    self->pos = 0;
     self->error = false;
 }
 
 static void stream_rewind(struct wic_stream *self)
 {
-    self->pos = 0U;
+    self->pos = 0;
     self->error = false;
 }
 
@@ -1599,7 +1597,7 @@ static enum wic_status stream_put_frame(struct wic_inst *self, struct wic_stream
     size_t frame_size;
     size_t max;
 
-    payload_size = f->size + ((f->opcode == WIC_OPCODE_CLOSE) ? 2U : 0U);
+    payload_size = f->size + ((f->opcode == WIC_OPCODE_CLOSE) ? ST(2) : ST(0));
     frame_size = min_frame_size(f->opcode, f->masked, f->size);
 
     buf = self->on_buffer(self, frame_size, f->type, &max);
@@ -1617,20 +1615,20 @@ static enum wic_status stream_put_frame(struct wic_inst *self, struct wic_stream
 
             stream_init(tx, buf, frame_size);
 
-            stream_put_u8(tx, (f->fin ? 0x80U : 0U )
-                | (f->rsv1 ? 0x40U : 0U )
-                | (f->rsv2 ? 0x20U : 0U )
-                | (f->rsv3 ? 0x10U : 0U )
+            stream_put_u8(tx, (f->fin ? U8(0x80) : U8(0) )
+                | (f->rsv1 ? U8(0x40) : U8(0) )
+                | (f->rsv2 ? U8(0x20) : U8(0) )
+                | (f->rsv3 ? U8(0x10) : U8(0) )
                 | opcode_to_byte(f->opcode)
             );
 
             if(payload_size <= 125U){
 
-                stream_put_u8(tx, (f->masked ? 0x80U : 0U) | payload_size);
+                stream_put_u8(tx, (f->masked ? U8(0x80) : U8(0)) | payload_size);
             }
             else{
 
-                stream_put_u8(tx, (f->masked ? 0x80U : 0U) | 126U);
+                stream_put_u8(tx, (f->masked ? U8(0x80) : U8(0)) | U8(126));
                 stream_put_u16(tx, payload_size);
             }
 
@@ -1648,7 +1646,7 @@ static enum wic_status stream_put_frame(struct wic_inst *self, struct wic_stream
 
                     for(pos=0U; pos < f->size; pos++){
 
-                        stream_put_u8(tx, ptr[pos] ^ f->mask[(pos+2U) % 4]);
+                        stream_put_u8(tx, ptr[pos] ^ f->mask[(pos+2) % 4]);
                     }
                 }
                 else{
@@ -1771,42 +1769,42 @@ static char b64_encode_byte(uint8_t in)
 static size_t b64_encode(const void *in, size_t len, char *out, size_t max)
 {
     uint8_t c;
-    uint8_t acc = 0U;
+    uint8_t acc = 0;
     size_t i;
     size_t retval = 0;
 
     if((max >= b64_encoded_size(len)) && (b64_encoded_size(len) >= len)){
 
-        for(i=0U; i < len; i++){
+        for(i=0; i < len; i++){
 
             c = ((const uint8_t *)in)[i];
 
-            switch(i%3U){
+            switch(i%3){
             default:
-            case 0U:
+            case ST(0):
                 out[retval] = b64_encode_byte(c >> 2);
                 retval++;
                 acc = (c << 4);
                 break;
-            case 1U:
+            case ST(1):
                 out[retval] = b64_encode_byte(acc | (c >> 4));
                 retval++;
                 acc = (c << 2);
                 break;
-            case 2U:
+            case ST(2):
                 out[retval] = b64_encode_byte(acc | (c >> 6));
-                out[retval+1U] = b64_encode_byte(c);
-                retval += 2U;
+                out[retval+1] = b64_encode_byte(c);
+                retval += 2;
             }
         }
 
-        if((len % 3U) > 0U){
+        if((len % 3) > 0U){
 
             out[retval] = b64_encode_byte(acc);
-            out[retval+1U] = '=';
-            retval += 2U;
+            out[retval+1] = '=';
+            retval += 2;
 
-            if((len % 3U) == 1U){
+            if((len % 3) == 1U){
 
                 out[retval] = '=';
                 retval++;
@@ -1834,7 +1832,7 @@ static int on_header_field(http_parser *http, const char *at, size_t length)
         stream_write(&self->rx.s, at, length);
         break;
     case WIC_HEADER_STATE_VALUE:
-        stream_put_u8(&self->rx.s, 0U);
+        stream_put_u8(&self->rx.s, 0);
         stream_write(&self->rx.s, at, length);
         break;
     }
@@ -1866,17 +1864,7 @@ static int on_header_value(http_parser *http, const char *at, size_t length)
     return 0;
 }
 
-static void server_hash(const char *nonce, size_t len, uint8_t *hash)
-{
-    static const char guid[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-    sha1_context ctx;
 
-    sha1_init(&ctx);
-    (void)sha1_starts_ret(&ctx);
-    (void)sha1_update_ret(&ctx, (const uint8_t *)nonce, len);
-    (void)sha1_update_ret(&ctx, (const uint8_t *)guid, sizeof(guid)-1U);
-    (void)sha1_finish_ret(&ctx, hash);
-}
 
 static bool str_equal(const char *s1, const char *s2)
 {
@@ -1958,7 +1946,7 @@ static int on_request_complete(http_parser *http)
         return -1;
     }
 
-    server_hash(header, strlen(header), self->hash);
+    wic_server_hash(header, strlen(header), self->hash);
 
     self->state = WIC_STATE_READY;
 
@@ -1969,29 +1957,29 @@ static int on_response_complete(http_parser *http)
 {
     struct wic_inst *self = http->data;
     const char *header;
-    char b64_hash[29U];
+    char b64_hash[29];
 
-    WIC_ASSERT((b64_encoded_size(sizeof(self->hash))+1U) == sizeof(b64_hash))
+    WIC_ASSERT((b64_encoded_size(sizeof(self->hash))+1) == sizeof(b64_hash))
 
     switch(self->header_state){
     default:
         break;
     case WIC_HEADER_STATE_VALUE:
-        stream_put_u8(&self->rx.s, 0U);
+        stream_put_u8(&self->rx.s, 0);
         break;
     }
 
     self->state = WIC_STATE_READY;
 
-    if(http->status_code != 101){
+    if(http->status_code != U16(101)){
 
         switch(http->status_code){
-        case 300U:
-        case 301U:
-        case 302U:
-        case 303U:
-        case 304U:
-        case 307U:
+        case U16(300):
+        case U16(301):
+        case U16(302):
+        case U16(303):
+        case U16(304):
+        case U16(307):
             self->redirect_url = wic_get_header(self, "location");
             break;
         default:
@@ -2056,8 +2044,13 @@ static bool on_message(struct wic_inst *inst, enum wic_encoding encoding, bool f
     return true;
 }
 
-#define UTF8
-#ifdef UTF8
+uint16_t wic_convert_close_reason(enum wic_close_reason reason)
+{
+    return (uint16_t)reason;
+}
+
+/* third party UTF8 parser */
+#if 1
 /* utf8_parse is based on:
  *
  * Copyright (c) 2008-2009 Bjoern Hoehrmann <bjoern@hoehrmann.de>
@@ -2102,9 +2095,9 @@ static uint16_t utf8_parse(uint16_t state, char in)
 
     uint16_t type;
 
-    type = utf8d[(uint8_t)in];
+    type = utf8d[ST(in)];
 
-    return utf8d[256U + state*16U + type];
+    return utf8d[256 + (state*16) + type];
 }
 
 static uint16_t utf8_parse_string(uint16_t state, const char *in, uint16_t len)
@@ -2112,7 +2105,7 @@ static uint16_t utf8_parse_string(uint16_t state, const char *in, uint16_t len)
     uint16_t i;
     uint16_t s = state;
 
-    for(i=0U; i < len; i++){
+    for(i=0; i < len; i++){
 
         s = utf8_parse(s, in[i]);
     }
@@ -2130,327 +2123,3 @@ static bool utf8_is_invalid(uint16_t state)
     return state == 1U;
 }
 #endif
-
-#define SHA1
-#ifdef SHA1
-/*
- * (Note that this source has been modified from the original to better fit the project)
- *
- *  FIPS-180-1 compliant SHA-1 implementation
- *
- *  Copyright (C) 2006-2015, ARM Limited, All Rights Reserved
- *  SPDX-License-Identifier: Apache-2.0
- *
- *  Licensed under the Apache License, Version 2.0 (the "License"); you may
- *  not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
- *
- *  http://www.apache.org/licenses/LICENSE-2.0
- *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
- *  WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
- *
- */
-static void sha1_init( sha1_context *ctx )
-{
-    (void)memset( ctx, 0, sizeof( sha1_context ) );
-}
-
-static int sha1_starts_ret( sha1_context *ctx )
-{
-    ctx->total[0] = 0;
-    ctx->total[1] = 0;
-
-    ctx->state[0] = 0x67452301;
-    ctx->state[1] = 0xEFCDAB89;
-    ctx->state[2] = 0x98BADCFE;
-    ctx->state[3] = 0x10325476;
-    ctx->state[4] = 0xC3D2E1F0;
-
-    return( 0 );
-}
-
-static int internal_sha1_process( sha1_context *ctx, const unsigned char data[64] )
-{
-    uint32_t temp, W[16], A, B, C, D, E;
-
-#ifndef GET_UINT32_BE
-#define GET_UINT32_BE(n,b,i)                            \
-{                                                       \
-    (n) = ( (uint32_t) (b)[(i)    ] << 24 )             \
-        | ( (uint32_t) (b)[(i) + 1] << 16 )             \
-        | ( (uint32_t) (b)[(i) + 2] <<  8 )             \
-        | ( (uint32_t) (b)[(i) + 3]       );            \
-}
-#endif
-
-#ifndef PUT_UINT32_BE
-#define PUT_UINT32_BE(n,b,i)                            \
-{                                                       \
-    (b)[(i)    ] = (unsigned char) ( (n) >> 24 );       \
-    (b)[(i) + 1] = (unsigned char) ( (n) >> 16 );       \
-    (b)[(i) + 2] = (unsigned char) ( (n) >>  8 );       \
-    (b)[(i) + 3] = (unsigned char) ( (n)       );       \
-}
-#endif
-
-    GET_UINT32_BE( W[ 0], data,  0 );
-    GET_UINT32_BE( W[ 1], data,  4 );
-    GET_UINT32_BE( W[ 2], data,  8 );
-    GET_UINT32_BE( W[ 3], data, 12 );
-    GET_UINT32_BE( W[ 4], data, 16 );
-    GET_UINT32_BE( W[ 5], data, 20 );
-    GET_UINT32_BE( W[ 6], data, 24 );
-    GET_UINT32_BE( W[ 7], data, 28 );
-    GET_UINT32_BE( W[ 8], data, 32 );
-    GET_UINT32_BE( W[ 9], data, 36 );
-    GET_UINT32_BE( W[10], data, 40 );
-    GET_UINT32_BE( W[11], data, 44 );
-    GET_UINT32_BE( W[12], data, 48 );
-    GET_UINT32_BE( W[13], data, 52 );
-    GET_UINT32_BE( W[14], data, 56 );
-    GET_UINT32_BE( W[15], data, 60 );
-
-#define S(x,n) (((x) << (n)) | (((x) & 0xFFFFFFFF) >> (32 - (n))))
-
-#define R(t)                                                    \
-    (                                                           \
-        temp = W[( (t) -  3 ) & 0x0F] ^ W[( (t) - 8 ) & 0x0F] ^ \
-               W[( (t) - 14 ) & 0x0F] ^ W[  (t)       & 0x0F],  \
-        ( W[(t) & 0x0F] = S(temp,1) )                           \
-    )
-
-#define P(a,b,c,d,e,x)                                          \
-    do                                                          \
-    {                                                           \
-        (e) += S((a),5) + F((b),(c),(d)) + K + (x);             \
-        (b) = S((b),30);                                        \
-    } while( 0 )
-
-    A = ctx->state[0];
-    B = ctx->state[1];
-    C = ctx->state[2];
-    D = ctx->state[3];
-    E = ctx->state[4];
-
-#define F(x,y,z) ((z) ^ ((x) & ((y) ^ (z))))
-#define K 0x5A827999
-
-    P( A, B, C, D, E, W[0]  );
-    P( E, A, B, C, D, W[1]  );
-    P( D, E, A, B, C, W[2]  );
-    P( C, D, E, A, B, W[3]  );
-    P( B, C, D, E, A, W[4]  );
-    P( A, B, C, D, E, W[5]  );
-    P( E, A, B, C, D, W[6]  );
-    P( D, E, A, B, C, W[7]  );
-    P( C, D, E, A, B, W[8]  );
-    P( B, C, D, E, A, W[9]  );
-    P( A, B, C, D, E, W[10] );
-    P( E, A, B, C, D, W[11] );
-    P( D, E, A, B, C, W[12] );
-    P( C, D, E, A, B, W[13] );
-    P( B, C, D, E, A, W[14] );
-    P( A, B, C, D, E, W[15] );
-    P( E, A, B, C, D, R(16) );
-    P( D, E, A, B, C, R(17) );
-    P( C, D, E, A, B, R(18) );
-    P( B, C, D, E, A, R(19) );
-
-#undef K
-#undef F
-
-#define F(x,y,z) ((x) ^ (y) ^ (z))
-#define K 0x6ED9EBA1
-
-    P( A, B, C, D, E, R(20) );
-    P( E, A, B, C, D, R(21) );
-    P( D, E, A, B, C, R(22) );
-    P( C, D, E, A, B, R(23) );
-    P( B, C, D, E, A, R(24) );
-    P( A, B, C, D, E, R(25) );
-    P( E, A, B, C, D, R(26) );
-    P( D, E, A, B, C, R(27) );
-    P( C, D, E, A, B, R(28) );
-    P( B, C, D, E, A, R(29) );
-    P( A, B, C, D, E, R(30) );
-    P( E, A, B, C, D, R(31) );
-    P( D, E, A, B, C, R(32) );
-    P( C, D, E, A, B, R(33) );
-    P( B, C, D, E, A, R(34) );
-    P( A, B, C, D, E, R(35) );
-    P( E, A, B, C, D, R(36) );
-    P( D, E, A, B, C, R(37) );
-    P( C, D, E, A, B, R(38) );
-    P( B, C, D, E, A, R(39) );
-
-#undef K
-#undef F
-
-#define F(x,y,z) (((x) & (y)) | ((z) & ((x) | (y))))
-#define K 0x8F1BBCDC
-
-    P( A, B, C, D, E, R(40) );
-    P( E, A, B, C, D, R(41) );
-    P( D, E, A, B, C, R(42) );
-    P( C, D, E, A, B, R(43) );
-    P( B, C, D, E, A, R(44) );
-    P( A, B, C, D, E, R(45) );
-    P( E, A, B, C, D, R(46) );
-    P( D, E, A, B, C, R(47) );
-    P( C, D, E, A, B, R(48) );
-    P( B, C, D, E, A, R(49) );
-    P( A, B, C, D, E, R(50) );
-    P( E, A, B, C, D, R(51) );
-    P( D, E, A, B, C, R(52) );
-    P( C, D, E, A, B, R(53) );
-    P( B, C, D, E, A, R(54) );
-    P( A, B, C, D, E, R(55) );
-    P( E, A, B, C, D, R(56) );
-    P( D, E, A, B, C, R(57) );
-    P( C, D, E, A, B, R(58) );
-    P( B, C, D, E, A, R(59) );
-
-#undef K
-#undef F
-
-#define F(x,y,z) ((x) ^ (y) ^ (z))
-#define K 0xCA62C1D6
-
-    P( A, B, C, D, E, R(60) );
-    P( E, A, B, C, D, R(61) );
-    P( D, E, A, B, C, R(62) );
-    P( C, D, E, A, B, R(63) );
-    P( B, C, D, E, A, R(64) );
-    P( A, B, C, D, E, R(65) );
-    P( E, A, B, C, D, R(66) );
-    P( D, E, A, B, C, R(67) );
-    P( C, D, E, A, B, R(68) );
-    P( B, C, D, E, A, R(69) );
-    P( A, B, C, D, E, R(70) );
-    P( E, A, B, C, D, R(71) );
-    P( D, E, A, B, C, R(72) );
-    P( C, D, E, A, B, R(73) );
-    P( B, C, D, E, A, R(74) );
-    P( A, B, C, D, E, R(75) );
-    P( E, A, B, C, D, R(76) );
-    P( D, E, A, B, C, R(77) );
-    P( C, D, E, A, B, R(78) );
-    P( B, C, D, E, A, R(79) );
-
-#undef K
-#undef F
-
-    ctx->state[0] += A;
-    ctx->state[1] += B;
-    ctx->state[2] += C;
-    ctx->state[3] += D;
-    ctx->state[4] += E;
-
-    return( 0 );
-}
-
-static int sha1_update_ret( sha1_context *ctx, const unsigned char *input, size_t ilen )
-{
-    int ret;
-    size_t fill;
-    uint32_t left;
-
-    if( ilen == 0 )
-        return( 0 );
-
-    left = ctx->total[0] & 0x3F;
-    fill = 64 - left;
-
-    ctx->total[0] += (uint32_t) ilen;
-    ctx->total[0] &= 0xFFFFFFFF;
-
-    if( ctx->total[0] < (uint32_t) ilen )
-        ctx->total[1]++;
-
-    if( left && ilen >= fill )
-    {
-        memcpy( (void *) (ctx->buffer + left), input, fill );
-
-        if( ( ret = internal_sha1_process( ctx, ctx->buffer ) ) != 0 )
-            return( ret );
-
-        input += fill;
-        ilen  -= fill;
-        left = 0;
-    }
-
-    while( ilen >= 64 )
-    {
-        if( ( ret = internal_sha1_process( ctx, input ) ) != 0 )
-            return( ret );
-
-        input += 64;
-        ilen  -= 64;
-    }
-
-    if( ilen > 0 )
-        memcpy( (void *) (ctx->buffer + left), input, ilen );
-
-    return( 0 );
-}
-
-static int sha1_finish_ret( sha1_context *ctx, unsigned char output[20] )
-{
-    int ret;
-    uint32_t used;
-    uint32_t high, low;
-
-    /*
-     * Add padding: 0x80 then 0x00 until 8 bytes remain for the length
-     */
-    used = ctx->total[0] & 0x3F;
-
-    ctx->buffer[used++] = 0x80;
-
-    if( used <= 56 )
-    {
-        /* Enough room for padding + length in current block */
-        memset( ctx->buffer + used, 0, 56 - used );
-    }
-    else
-    {
-        /* We'll need an extra block */
-        memset( ctx->buffer + used, 0, 64 - used );
-
-        if( ( ret = internal_sha1_process( ctx, ctx->buffer ) ) != 0 )
-            return( ret );
-
-        memset( ctx->buffer, 0, 56 );
-    }
-
-    /*
-     * Add message length
-     */
-    high = ( ctx->total[0] >> 29 )
-         | ( ctx->total[1] <<  3 );
-    low  = ( ctx->total[0] <<  3 );
-
-    PUT_UINT32_BE( high, ctx->buffer, 56 );
-    PUT_UINT32_BE( low,  ctx->buffer, 60 );
-
-    if( ( ret = internal_sha1_process( ctx, ctx->buffer ) ) != 0 )
-        return( ret );
-
-    /*
-     * Output final state
-     */
-    PUT_UINT32_BE( ctx->state[0], output,  0 );
-    PUT_UINT32_BE( ctx->state[1], output,  4 );
-    PUT_UINT32_BE( ctx->state[2], output,  8 );
-    PUT_UINT32_BE( ctx->state[3], output, 12 );
-    PUT_UINT32_BE( ctx->state[4], output, 16 );
-
-    return( 0 );
-}
-
-#endif
-

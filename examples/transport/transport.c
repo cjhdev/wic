@@ -138,7 +138,7 @@ bool transport_recv(int s, struct wic_inst *inst)
     
     if(bytes <= 0){
 
-        wic_close_with_reason(inst, WIC_CLOSE_ABNORMAL_2, NULL, 0);
+        wic_close_with_reason(inst, wic_convert_close_reason(WIC_CLOSE_REASON_ABNORMAL_2), NULL, 0);
     }
 
     return (bytes > 0);

@@ -19,8 +19,8 @@
  *
  * */
 
-#ifndef PORT_H
-#define PORT_H
+#ifndef WIC_CONFIG_H
+#define WIC_CONFIG_H
 
 #include <stdio.h>
 #include <assert.h>

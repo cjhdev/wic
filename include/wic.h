@@ -43,22 +43,7 @@ extern "C" {
 #include <stddef.h>
 
 #include "http_parser.h"
-
-#ifdef WIC_PORT_INCLUDE
-#   include WIC_PORT_INCLUDE
-#else
-/** a filename to be included by the preprocessor
- *
- * e.g.
- * 
- * @code
- * -D'WIC_PORT_INCLUDE="port.h"'
- * @endcode
- *
- * */
-#   define WIC_PORT_INCLUDE
-#   undef  WIC_PORT_INCLUDE
-#endif
+#include "wic_config.h"
 
 #ifndef WIC_DEBUG
 /** print a debug level message
@@ -101,50 +86,51 @@ extern "C" {
 
 #ifndef WIC_HOSTNAME_MAXLEN
 /** redefine size of #wic_inst hostname buffer */
-#   define WIC_HOSTNAME_MAXLEN 256U
+#   define WIC_HOSTNAME_MAXLEN  256
 #endif
 
 /* the following reasons will be sent over the wire */
 
-/** the purpose for which the connection was established has been fulfilled */
-#define WIC_CLOSE_NORMAL                1000U
+enum wic_close_reason {
 
-/** endpoint is going away */
-#define WIC_CLOSE_GOING_AWAY            1001U
+    /** the purpose for which the connection was established has been fulfilled */
+    WIC_CLOSE_REASON_NORMAL = 1000,
 
-/** protocol error */
-#define WIC_CLOSE_PROTOCOL_ERROR        1002U
+    /** endpoint is going away */
+    WIC_CLOSE_REASON_GOING_AWAY = 1001,
 
-/** endpoint has received an opcode it doesn't support */
-#define WIC_CLOSE_UNSUPPORTED           1003U
+    /** protocol error */
+    WIC_CLOSE_REASON_PROTOCOL_ERROR = 1002,
 
-/** data received in message not consistent with type of message (e.g. invalid UTF8) */
-#define WIC_CLOSE_INVALID_DATA          1007U
+    /** endpoint has received an opcode it doesn't support */
+    WIC_CLOSE_REASON_UNSUPPORTED = 1003,
 
-/** message received violates endpoint policy */
-#define WIC_CLOSE_POLICY                1008U
+    WIC_CLOSE_REASON_RESERVED = 1004,
 
-/** message is too large to receive */
-#define WIC_CLOSE_TOO_BIG               1009U
+    /** abnormal closure #1 (application specific meaning) */
+    WIC_CLOSE_REASON_ABNORMAL_1 = 1005,
 
-/** extension is required */
-#define WIC_CLOSE_EXTENSION_REQUIRED    1010U
+    /** abnormal closure #2  (application specific meaning) */
+    WIC_CLOSE_REASON_ABNORMAL_2 = 1006,
 
-/** some other unexpected exception */
-#define WIC_CLOSE_UNEXPECTED_EXCEPTION  1011U
+    /** data received in message not consistent with type of message (e.g. invalid UTF8) */
+    WIC_CLOSE_REASON_INVALID_DATA = 1007,
 
-/* the following are not sent over the wire */
+    /** message received violates endpoint policy */
+    WIC_CLOSE_REASON_POLICY = 1008,
 
-#define WIC_CLOSE_RESERVED          1004U
+    /** message is too large to receive */
+    WIC_CLOSE_REASON_TOO_BIG = 1009,
 
-/** abnormal closure #1 (application specific meaning) */
-#define WIC_CLOSE_ABNORMAL_1        1005U
+    /** extension is required */
+    WIC_CLOSE_REASON_EXTENSION_REQUIRED = 1010,
 
-/** abnormal closure #2  (application specific meaning) */
-#define WIC_CLOSE_ABNORMAL_2        1006U
+    /** some other unexpected exception */
+    WIC_CLOSE_REASON_UNEXPECTED_EXCEPTION = 1011,
 
-/** TLS specific abornmal closure  */
-#define WIC_CLOSE_TLS               1015U
+    /** TLS specific abornmal closure  */
+    WIC_CLOSE_REASON_TLS = 1015,
+};
 
 struct wic_inst;
 
@@ -395,22 +381,22 @@ enum wic_rx_state {
 
 enum wic_opcode {
 
-    WIC_OPCODE_CONTINUE     = 0,
-    WIC_OPCODE_TEXT         = 1,
-    WIC_OPCODE_BINARY       = 2,
-    WIC_OPCODE_RESERVE_3    = 3,
-    WIC_OPCODE_RESERVE_4    = 4,
-    WIC_OPCODE_RESERVE_5    = 5,
-    WIC_OPCODE_RESERVE_6    = 6,
-    WIC_OPCODE_RESERVE_7    = 7,
-    WIC_OPCODE_CLOSE        = 8,
-    WIC_OPCODE_PING         = 9,
-    WIC_OPCODE_PONG         = 10,
-    WIC_OPCODE_RESERVE_11   = 11,
-    WIC_OPCODE_RESERVE_12   = 12,
-    WIC_OPCODE_RESERVE_13   = 13,
-    WIC_OPCODE_RESERVE_14   = 14,
-    WIC_OPCODE_RESERVE_15   = 15
+    WIC_OPCODE_CONTINUE,
+    WIC_OPCODE_TEXT,
+    WIC_OPCODE_BINARY,
+    WIC_OPCODE_RESERVE_3,
+    WIC_OPCODE_RESERVE_4,
+    WIC_OPCODE_RESERVE_5,
+    WIC_OPCODE_RESERVE_6,
+    WIC_OPCODE_RESERVE_7,
+    WIC_OPCODE_CLOSE,
+    WIC_OPCODE_PING,
+    WIC_OPCODE_PONG,
+    WIC_OPCODE_RESERVE_11,
+    WIC_OPCODE_RESERVE_12,
+    WIC_OPCODE_RESERVE_13,
+    WIC_OPCODE_RESERVE_14,
+    WIC_OPCODE_RESERVE_15
 };
 
 struct wic_stream {
@@ -440,7 +426,7 @@ struct wic_rx_frame {
     enum wic_opcode opcode;
     enum wic_opcode frag;
     
-    uint8_t mask[4U];
+    uint8_t mask[4];
     uint64_t size;
     uint16_t pos;
     bool masked;
@@ -522,7 +508,7 @@ struct wic_inst {
     uint16_t utf8_tx;
     uint16_t utf8_rx;
 
-    uint8_t hash[20U];
+    uint8_t hash[20];
 
     /* The default size should cover all use cases */
     char hostname[WIC_HOSTNAME_MAXLEN];
@@ -658,19 +644,21 @@ void wic_close(struct wic_inst *self);
  *
  * RFC6455 defines the following codes:
  *
- * - #WIC_CLOSE_NORMAL
- * - #WIC_CLOSE_GOING_AWAY
- * - #WIC_CLOSE_PROTOCOL_ERROR
- * - #WIC_CLOSE_UNSUPPORTED
- * - #WIC_CLOSE_ABNORMAL_1
- * - #WIC_CLOSE_ABNORMAL_2
- * - #WIC_CLOSE_TLS
- * - #WIC_CLOSE_INVALID_DATA
- * - #WIC_CLOSE_POLICY
- * - #WIC_CLOSE_TOO_BIG
- * - #WIC_CLOSE_EXTENSION_REQUIRED
- * - #WIC_CLOSE_UNEXPECTED_EXCEPTION
+ * - #WIC_CLOSE_REASON_NORMAL
+ * - #WIC_CLOSE_REASON_GOING_AWAY
+ * - #WIC_CLOSE_REASON_PROTOCOL_ERROR
+ * - #WIC_CLOSE_REASON_UNSUPPORTED
+ * - #WIC_CLOSE_REASON_ABNORMAL_1
+ * - #WIC_CLOSE_REASON_ABNORMAL_2
+ * - #WIC_CLOSE_REASON_TLS
+ * - #WIC_CLOSE_REASON_INVALID_DATA
+ * - #WIC_CLOSE_REASON_POLICY
+ * - #WIC_CLOSE_REASON_TOO_BIG
+ * - #WIC_CLOSE_REASON_EXTENSION_REQUIRED
+ * - #WIC_CLOSE_REASON_UNEXPECTED_EXCEPTION
  * 
+ * Use wic_convert_close_reason() to convert #wic_close_reason to integer code argument
+ *
  * */
 void wic_close_with_reason(struct wic_inst *self, uint16_t code, const char *reason, uint16_t size);
 
@@ -807,6 +795,15 @@ void wic_rewind_get_next_header(struct wic_inst *self);
  *
  * */
 enum wic_state wic_get_state(const struct wic_inst *self);
+
+/** Convert close reason enum to integer code
+ *
+ * @param[in] reason
+ *
+ * @return code
+ *
+ * */
+uint16_t wic_convert_close_reason(enum wic_close_reason reason);
 
 #ifdef __cplusplus
 }

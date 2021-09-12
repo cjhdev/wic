@@ -13,18 +13,18 @@ CFLAGS += -DVERSION=\"$(shell cat $(DIR_ROOT)/version)\"
 
 CFLAGS := -O0 -Wall -ggdb $(INCLUDES)
 
-CFLAGS += -D'WIC_PORT_INCLUDE="port.h"'
-
 SRC := $(notdir $(wildcard $(DIR_ROOT)/src/*.c)) transport.c
 OBJ := $(SRC:.c=.o)
 
 all: $(addprefix bin/, demo_client)
 
 bin/demo_client: $(addprefix build/,$(OBJ) demo_client.o)
+	@ mkdir -p bin
 	$(CC) $(LDFLAGS) $^ -o $@
 
 build/%.o: %.c
 	@ echo building $@
+	@ mkdir -p build
 	@ $(CC) $(CFLAGS) -c $< -o $@
 
 clean:

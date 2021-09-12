@@ -1,6 +1,16 @@
 History
 =======
 
+## 0.3.0
+
+- updated LICENSE file to show license banner text for all components
+- rename 'port' directory to 'wrapper'
+- replace WIC_PORT_INCLUDE macro with requirement to always have a file called 'wic_config.h' in include path
+- SHA1 code (Apache 2.0) is now clearly separated from MIT licensed code
+- renamed standard close reasons from WIC_CLOSE_xxx to WIC_CLOSE_REASON_xxx
+- close reasons are now enums instead of preprocessor macros to catch spelling mistakes
+- added wic_convert_close_reason() to convert standard close reason enums to integer codes
+
 ## 0.2.2
 
 - moved all mbed examples into examples/mbed

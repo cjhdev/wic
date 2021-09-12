@@ -330,7 +330,7 @@ ClientBase::do_send(enum wic_encoding encoding, bool fin, const char *value, uin
 void
 ClientBase::do_handshake_timeout()
 {
-    wic_close_with_reason(&inst, WIC_CLOSE_ABNORMAL_1, NULL, 0U);
+    wic_close_with_reason(&inst, wic_convert_close_reason(WIC_CLOSE_REASON_ABNORMAL_1), NULL, 0U);
 }
 
 void
@@ -383,7 +383,7 @@ ClientBase::worker_task()
                     break;
                 default:
 
-                    wic_close_with_reason(&inst, WIC_CLOSE_ABNORMAL_2, NULL, 0U);
+                    wic_close_with_reason(&inst, wic_convert_close_reason(WIC_CLOSE_REASON_ABNORMAL_2), NULL, 0U);
                     do_work();
                     rx_pool.free(_rx);
                     _rx = nullptr;

@@ -31,29 +31,33 @@ WIC is a work in progress. This means that:
   becomes connected (i.e. wic_get_state() == WIC_STATE_READY)
 - doesn't support extensions
 - there are a bewildering number of function pointers
+- enums must be at least 16 bit
 
 The handshake field limitation is a consequence of storing header
 fields in the same buffer as used for receiving websocket frames. Applications
 that require header fields to persist beyond WIC_STATE_READY will need
 to copy the fields when they are available.
 
-## Integrations
+## Wrappers / Integrations
 
-- [mbed wrapper](port/mbed)
+- [mbed](wrapper/mbed)
 
 ## Compiling
 
 - add `include` to the search path
+- create empty file in search path and name it `wic_config.h`
 - compile sources in `src`
 
-There are some macros you can define. These listed at the top of [include/wic.h](include/wic.h) and
-in the [API documentation](https://cjhdev.github.io/wic_api/).
+`wic_config.h` can be empty or it can contain definitions for:
 
-The WIC_PORT_HEADER macro can be used to define a filename which
-will be included into wic.h. This might be the most
-convenient place to define/redefine other macros.
+- WIC_DEBUG(XX): debug level log message
+- WIC_ERROR(XX): debug level log message
+- WIC_ASSERT(XX): assertions
+- WIC_HOSTNAME_MAXLEN: redefine the maximum size of hostname buffer
 
 ## Usage
+
+Include `wic.h` in your source.
 
 Below is an example of a client that:
 
