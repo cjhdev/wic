@@ -19,8 +19,26 @@
  *
  * */
 
-#include "transport.h"
-#include "log.h"
+#ifdef WIN32
+
+#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#define close closesocket
+#undef ssize_t
+#ifdef _WIN64
+typedef __int64 ssize_t;
+#else
+typedef int ssize_t;
+#endif
+void transport_init() {
+    WORD wVersionRequested; WSADATA wsaData;
+    wVersionRequested = MAKEWORD(2, 2);
+    WSAStartup(wVersionRequested, &wsaData);
+}
+
+#else
 
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -30,10 +48,19 @@
 #include <netdb.h>
 #include <poll.h>
 #include <errno.h>
+
+void transport_init() {}
+
+#endif
+
 #include <string.h>
+#include "transport.h"
+#include "log.h"
 
 bool transport_open_client(enum wic_schema schema, const char *host, uint16_t port, int *s)
 {
+    transport_init();
+
     char pbuf[20];
     struct addrinfo *res;
     bool retval = false;
@@ -71,7 +98,11 @@ bool transport_open_client(enum wic_schema schema, const char *host, uint16_t po
     }
     else{
 
+#ifdef __APPLE__
+        *s = socket(res->ai_family, /*res->ai_socktype*/SOCK_STREAM, /*res->ai_protocol*/IPPROTO_TCP); // was datagram/udp on macos
+#else
         *s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+#endif
 
         if(*s < 0){
 
@@ -105,14 +136,18 @@ bool transport_open_client(enum wic_schema schema, const char *host, uint16_t po
 
 void transport_write(int s, const void *data, size_t size)
 {
-    const uint8_t *ptr = data;
+    const uint8_t *ptr = (const uint8_t *)data;
     size_t pos;
     int retval;
-
+    
     for(pos=0U; pos < size; pos += retval){
 
+#ifdef WIN32
+        retval = send(s, &ptr[pos], size - pos, 0);
+#else
         retval = write(s, &ptr[pos], size - pos);
-
+#endif
+        
         if(retval <= 0){
 
             break;

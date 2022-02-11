@@ -28,9 +28,15 @@
 
 #include "wic.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 bool transport_open_client(enum wic_schema schema, const char *host, uint16_t port, int *s);
 bool transport_recv(int s, struct wic_inst *inst);
 void transport_write(int s, const void *data, size_t size);
 void transport_close(int *s);
+#ifdef __cplusplus
+}
+#endif
 
 #endif
