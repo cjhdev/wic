@@ -1,3 +1,7 @@
+/* Copyright (c) 2023 Cameron Harper
+ *
+ * */
+
 #ifndef WIC_SERVER_HASH_H
 #define WIC_SERVER_HASH_H
 

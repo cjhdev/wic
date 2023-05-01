@@ -1,21 +1,4 @@
-/* Copyright (c) 2020 Cameron Harper
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy of
- * this software and associated documentation files (the "Software"), to deal in
- * the Software without restriction, including without limitation the rights to
- * use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
- * the Software, and to permit persons to whom the Software is furnished to do so,
- * subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
- * FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
- * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
- * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+/* Copyright (c) 2023 Cameron Harper
  *
  * */
 
@@ -67,6 +50,8 @@ static const enum wic_opcode opcodes[] = {
     WIC_OPCODE_RESERVE_14,
     WIC_OPCODE_RESERVE_15
 };
+
+static const char TAG[] = "wic";
 
 /* static prototypes **************************************************/
 
@@ -153,19 +138,19 @@ bool wic_init(struct wic_inst *self, const struct wic_init_arg *arg)
 
     if(arg->on_send == NULL){
 
-        WIC_ERROR("on_send interface is mandatory")
+        WIC_ERROR(TAG, "on_send interface is mandatory")
         return false;
     }
 
     if(arg->on_buffer == NULL){
 
-        WIC_ERROR("on_buffer interface is mandatory")
+        WIC_ERROR(TAG, "on_buffer interface is mandatory")
         return false;
     }
 
     if((arg->role == WIC_ROLE_CLIENT) && (arg->url == NULL)){
 
-        WIC_ERROR("URL is required for client role")
+        WIC_ERROR(TAG, "URL is required for client role")
         return false;
     }
 
@@ -187,7 +172,7 @@ bool wic_init(struct wic_inst *self, const struct wic_init_arg *arg)
 
             if(i == (sizeof(supported_schema)/sizeof(*supported_schema))){
 
-                WIC_ERROR("unrecognised URL schema")
+                WIC_ERROR(TAG, "unrecognised URL schema")
                 return false;
             }
 
@@ -210,7 +195,7 @@ bool wic_init(struct wic_inst *self, const struct wic_init_arg *arg)
 
             if(u.field_data[UF_HOST].len > (sizeof(self->hostname)-1U)){
 
-                WIC_ERROR("hostname is too long for buffer")
+                WIC_ERROR(TAG, "hostname is too long for buffer")
                 return false;
             }
 
@@ -218,14 +203,14 @@ bool wic_init(struct wic_inst *self, const struct wic_init_arg *arg)
         }
         else{
 
-            WIC_ERROR("invalid URL")
+            WIC_ERROR(TAG, "invalid URL")
             return false;
         }
     }
 
     if(arg->role != WIC_ROLE_CLIENT){
 
-        WIC_ERROR("only supporting client roles")
+        WIC_ERROR(TAG, "only supporting client roles")
         return false;
     }
 
@@ -354,14 +339,14 @@ enum wic_status wic_send_binary(struct wic_inst *self, bool fin, const void *dat
 
         default:
 
-            WIC_ERROR("text fragmentation already in progress")
+            WIC_ERROR(TAG, "text fragmentation already in progress")
             retval = WIC_STATUS_BAD_STATE;
             break;
         }
     }
     else{
 
-        WIC_ERROR("websocket is not open")
+        WIC_ERROR(TAG, "websocket is not open")
         retval = WIC_STATUS_NOT_OPEN;
     }
 
@@ -397,7 +382,7 @@ enum wic_status wic_send_text(struct wic_inst *self, bool fin, const char *data,
 
             if(utf8_is_invalid(state)){
 
-                WIC_ERROR("payload is not UTF8")
+                WIC_ERROR(TAG, "payload is not UTF8")
                 retval = WIC_STATUS_BAD_INPUT;
             }
             else if(!fin || utf8_is_complete(state)){
@@ -413,21 +398,21 @@ enum wic_status wic_send_text(struct wic_inst *self, bool fin, const char *data,
             }
             else{
 
-                WIC_ERROR("payload is not UTF8")
+                WIC_ERROR(TAG, "payload is not UTF8")
                 retval = WIC_STATUS_BAD_INPUT;
             }
             break;
 
         default:
 
-            WIC_ERROR("binary fragmentation already in progress")
+            WIC_ERROR(TAG, "binary fragmentation already in progress")
             retval = WIC_STATUS_BAD_STATE;
             break;
         }
     }
     else{
 
-        WIC_ERROR("websocket is not open")
+        WIC_ERROR(TAG, "websocket is not open")
         retval = WIC_STATUS_NOT_OPEN;
     }
 
@@ -482,7 +467,7 @@ enum wic_status wic_send_ping_with_payload(struct wic_inst *self, const void *da
     }
     else{
 
-        WIC_ERROR("websocket is not open")
+        WIC_ERROR(TAG, "websocket is not open")
         retval = WIC_STATUS_NOT_OPEN;
     }
 
@@ -512,7 +497,7 @@ size_t wic_parse(struct wic_inst *self, const void *data, size_t size)
 
         if(self->http.http_errno != 0U){
 
-            WIC_ERROR("http parser reports error: (%u %s) %s", self->http.http_errno, http_errno_name(self->http.http_errno), http_errno_description(self->http.http_errno))
+            WIC_ERROR(TAG, "http parser reports error: (%u %s) %s", self->http.http_errno, http_errno_name(self->http.http_errno), http_errno_description(self->http.http_errno))
 
             if(self->on_close_transport != NULL){
 
@@ -642,7 +627,7 @@ const char *wic_get_header(const struct wic_inst *self, const char *name)
     }
     else{
 
-        WIC_DEBUG("headers not available in this state")
+        WIC_DEBUG(TAG, "headers not available in this state")
     }
 
     return retval;
@@ -752,7 +737,7 @@ static enum wic_status send_pong_with_payload(struct wic_inst *self, const void 
     }
     else{
 
-        WIC_ERROR("websocket is not open")
+        WIC_ERROR(TAG, "websocket is not open")
         retval = WIC_STATUS_NOT_OPEN;
     }
 
@@ -823,7 +808,7 @@ static void close_with_reason(struct wic_inst *self, uint16_t code, const char *
 
         if(!utf8_is_complete(utf8_parse_string(0, reason, size))){
 
-            WIC_ERROR("reason string must be UTF8 (discarding)")
+            WIC_ERROR(TAG, "reason string must be UTF8 (discarding)")
             f.size = 0;
             f.payload = NULL;
         }
@@ -1358,19 +1343,19 @@ static enum wic_status start_server(struct wic_inst *self)
 
                 /* send with length zero to free */
                 self->on_send(self, tx.read, 0, WIC_BUFFER_HTTP);
-                WIC_DEBUG("handshake too large for buffer")
+                WIC_DEBUG(TAG, "handshake too large for buffer")
                 retval = WIC_STATUS_TOO_LARGE;
             }
         }
         else{
 
-            WIC_DEBUG("buffer not available")
+            WIC_DEBUG(TAG, "buffer not available")
             retval = WIC_STATUS_WOULD_BLOCK;
         }
     }
     else{
 
-        WIC_DEBUG("server wic_inst.state must be WIC_STATE_READY to start")
+        WIC_DEBUG(TAG, "server wic_inst.state must be WIC_STATE_READY to start")
         retval = WIC_STATUS_BAD_STATE;
     }
 
@@ -1468,25 +1453,25 @@ static enum wic_status start_client(struct wic_inst *self)
                     /* send with length zero to free */
                     self->on_send(self, tx.read, 0, WIC_BUFFER_HTTP);
 
-                    WIC_ERROR("handshake too large for buffer")
+                    WIC_ERROR(TAG, "handshake too large for buffer")
                     retval = WIC_STATUS_TOO_LARGE;
                 }
             }
             else{
 
-                WIC_ERROR("no buffer available")
+                WIC_ERROR(TAG, "no buffer available")
                 retval = WIC_STATUS_WOULD_BLOCK;
             }
         }
         else{
 
-            WIC_ERROR("URL is invalid")
+            WIC_ERROR(TAG, "URL is invalid")
             retval = WIC_STATUS_BAD_INPUT;
         }
     }
     else{
 
-        WIC_ERROR("client wic_inst.state must be WIC_STATE_INIT to start")
+        WIC_ERROR(TAG, "client wic_inst.state must be WIC_STATE_INIT to start")
         retval = WIC_STATUS_BAD_STATE;
     }
 
@@ -1672,13 +1657,13 @@ static enum wic_status stream_put_frame(struct wic_inst *self, struct wic_stream
         }
         else{
 
-            WIC_ERROR("no buffer available")
+            WIC_ERROR(TAG, "no buffer available")
             retval = WIC_STATUS_WOULD_BLOCK;
         }
     }
     else{
 
-        WIC_ERROR("message too large for buffer")
+        WIC_ERROR(TAG, "message too large for buffer")
         retval = WIC_STATUS_TOO_LARGE;
     }
 
@@ -1904,7 +1889,7 @@ static int on_request_complete(http_parser *http)
     case WIC_HEADER_STATE_IDLE:
         break;
     case WIC_HEADER_STATE_FIELD:
-        WIC_DEBUG("unexpected state")
+        WIC_DEBUG(TAG, "unexpected state")
         return -1;
     case WIC_HEADER_STATE_VALUE:
         stream_put_u8(&self->rx.s, 0U);
@@ -1918,7 +1903,7 @@ static int on_request_complete(http_parser *http)
     /* expecting to have recevieved Connection: Upgrade */
     if(http->upgrade != 1){
 
-        WIC_DEBUG("connection has not been upgraded")
+        WIC_DEBUG(TAG, "connection has not been upgraded")
         return -1;
     }
 
@@ -1927,13 +1912,13 @@ static int on_request_complete(http_parser *http)
 
     if(header == NULL){
 
-        WIC_DEBUG("expecting an upgrade field")
+        WIC_DEBUG(TAG, "expecting an upgrade field")
         return -1;
     }
 
     if(!str_equal(header, "websocket")){
 
-        WIC_DEBUG("unexpected upgrade field value")
+        WIC_DEBUG(TAG, "unexpected upgrade field value")
         return -1;
     }
 
@@ -1942,7 +1927,7 @@ static int on_request_complete(http_parser *http)
 
     if(header == NULL){
 
-        WIC_DEBUG("expecting Sec-WebSocket-Key header")
+        WIC_DEBUG(TAG, "expecting Sec-WebSocket-Key header")
         return -1;
     }
 
@@ -1986,14 +1971,14 @@ static int on_response_complete(http_parser *http)
             break;
         }
 
-        WIC_DEBUG("unexpected status code")
+        WIC_DEBUG(TAG, "expecting status code 101 but got %" PRIu16, http->status_code)
         return -1;
     }
 
     /* expecting to have recevieved Connection: Upgrade */
     if(http->upgrade != 1){
 
-        WIC_DEBUG("connection has not been upgraded")
+        WIC_DEBUG(TAG, "connection has not been upgraded")
         return -1;
     }
 
@@ -2002,13 +1987,13 @@ static int on_response_complete(http_parser *http)
 
     if(header == NULL){
 
-        WIC_DEBUG("expecting an upgrade field")
+        WIC_DEBUG(TAG, "expecting an upgrade field")
         return -1;
     }
 
     if(!str_equal(header, "websocket")){
 
-        WIC_DEBUG("unexpected upgrade field value")
+        WIC_DEBUG(TAG, "unexpected upgrade field value")
         return -1;
     }
 
@@ -2017,7 +2002,7 @@ static int on_response_complete(http_parser *http)
 
     if(header == NULL){
 
-        WIC_DEBUG("expecting Sec-WebSocket-Accept field")
+        WIC_DEBUG(TAG, "expecting Sec-WebSocket-Accept field")
         return -1;
     }
 
@@ -2026,7 +2011,7 @@ static int on_response_complete(http_parser *http)
 
     if(strcmp(header, b64_hash) != 0){
 
-        WIC_DEBUG("unexpected Sec-WebSocket-Accept field value")
+        WIC_DEBUG(TAG, "unexpected Sec-WebSocket-Accept field value")
         return -1;
     }
 
