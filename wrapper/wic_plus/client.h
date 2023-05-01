@@ -1,3 +1,7 @@
+/* Copyright (c) 2023 Cameron Harper
+ *
+ * */
+
 #ifndef CLIENT_H
 #define CLIENT_H
 
@@ -6,7 +10,9 @@
 
 #include <chrono>
 #include <vector>
+#include <array>
 #include <thread>
+
 #include <boost/asio.hpp>
 
 namespace WIC {
@@ -14,6 +20,8 @@ namespace WIC {
     class Client {
 
     public:
+
+        using timeout = std::chrono::duration<unsigned, std::chrono::seconds>;
 
         Client(size_t rx_max = 1024, size_t tx_max = 1024);
 
@@ -23,9 +31,7 @@ namespace WIC {
 
         void close();
 
-        using timeout = std::chrono::duration<unsigned, std::chrono::seconds>;
-
-        wic_status recv(enum wic_encoding& encoding, bool &fin, char *buffer, size_t max);
+        wic_status recv(wic_encoding& encoding, bool& fin, void *buffer, size_t max, size_t& size);
 
         wic_status send_binary(const void *data, size_t size, bool fin = true);
 
@@ -43,16 +49,18 @@ namespace WIC {
         Semaphore pong_buffer_sem;
         Semaphore close_buffer_sem;
 
+        boost::asio::deadline_timer ping_timer;
+
         Semaphore handshake_sem;
         bool handshake_success;
         wic_handshake_failure handshake_fail_reason;
 
         wic_inst inst;
 
-        // at this time we have one user buffer for incoming utf and bin data
+        // one user buffer for incoming utf and bin data
         std::vector<uint8_t> rx_buffer;
 
-        // at this time we have one user buffer for outgoing utf and bin data
+        // one user buffer for outgoing utf and bin data
         std::vector<uint8_t> user_buffer;
 
         // fixed size buffers required for sending pings, pongs, and closes
@@ -67,20 +75,22 @@ namespace WIC {
 
         std::thread t;
 
-        static bool on_message_handler(struct wic_inst *inst, enum wic_encoding encoding, bool fin, const char *data, uint16_t size);
-        static void on_open_handler(struct wic_inst *inst);
-        static void on_handshake_failure_handler(struct wic_inst *inst, enum wic_handshake_failure reason);
-        static void on_close_handler(struct wic_inst *inst, uint16_t code, const char *reason, uint16_t size);
-        static void on_close_transport_handler(struct wic_inst *inst);
-        static void on_send_handler(struct wic_inst *inst, const void *data, size_t size, enum wic_buffer type);
-        static void *on_buffer_handler(struct wic_inst *inst, size_t min_size, enum wic_buffer type, size_t *max_size);
-        static uint32_t rand_handler(struct wic_inst *inst);
+        static bool on_message_handler(wic_inst *inst, wic_encoding encoding, bool fin, const char *data, uint16_t size);
+        static void on_open_handler(wic_inst *inst);
+        static void on_handshake_failure_handler(wic_inst *inst, wic_handshake_failure reason);
+        static void on_close_handler(wic_inst *inst, uint16_t code, const char *reason, uint16_t size);
+        static void on_close_transport_handler(wic_inst *inst);
+        static void on_send_handler(wic_inst *inst, const void *data, size_t size, wic_buffer type);
+        static void *on_buffer_handler(wic_inst *inst, size_t min_size, wic_buffer type, size_t *max_size);
+        static uint32_t rand_handler(wic_inst *inst);
 
-        static Client *get_self(struct wic_inst *inst);
+        static Client& get_self(wic_inst *inst);
 
         static void do_read(Client *self);
 
         wic_status send(const char *data, size_t size, bool fin, wic_encoding encoding);
+
+        static void do_ping(Client& self);
     };
 };
 

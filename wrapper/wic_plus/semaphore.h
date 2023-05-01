@@ -1,3 +1,7 @@
+/* Copyright (c) 2023 Cameron Harper
+ *
+ * */
+
 #ifndef SEMAPHORE_H
 #define SEMAPHORE_H
 

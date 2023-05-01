@@ -1,3 +1,7 @@
+/* Copyright (c) 2023 Cameron Harper
+ *
+ * */
+
 #include "semaphore.h"
 
 using namespace WIC;
